@@ -1,0 +1,27 @@
+# ESP-IDF Git Ignore
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.old.old
+managed_components/
+dependencies.lock
+*.bin
+*.elf
+*.map
+.ninja_deps
+.ninja_log
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+kconfigs.in
+kconfigs_projbuild.in
+project_description.json
+flasher_args.json
+config.env
+.bin_timestamp
+x509_crt_bundle.S
+*.pyc
+__pycache__/
+.DS_Store
+.vscode/
+.idea/
