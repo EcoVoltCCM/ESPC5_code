@@ -147,9 +147,9 @@ void TelemetrySystem::sensor_loop() {
 
         // External ADC (Throttle/Brakes)
         if (external_adc.is_ready()) {
-            float t_v = external_adc.read_voltage(0);
-            float b1_v = external_adc.read_voltage(1);
-            float b2_v = external_adc.read_voltage(2);
+            float b2_v = external_adc.read_voltage(1);
+            float b1_v = external_adc.read_voltage(2);
+            float t_v = external_adc.read_voltage(3);
             
             auto map_to_pct = [](float v) {
                 float pct = (v - 0.54f) / (1.72f - 0.54f) * 100.0f;

@@ -15,8 +15,8 @@ namespace TelemetryConfig {
 }
 
 namespace HardwareConfig {
-    const uint8_t MPU6050_ADDR = 0x68;
-    const uint8_t MPU6050_STEERING_ADDR = 0x69;
+    const uint8_t MPU6050_ADDR = 0x69;
+    const uint8_t MPU6050_STEERING_ADDR = 0x68;
     const uint8_t ADS1115_ADDR = 0x48;
     const gpio_num_t I2C_MASTER_SCL_IO = GPIO_NUM_5; // Changed from 26
     const gpio_num_t I2C_MASTER_SDA_IO = GPIO_NUM_4; // Changed from 25

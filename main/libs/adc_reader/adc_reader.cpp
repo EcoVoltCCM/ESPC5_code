@@ -9,10 +9,10 @@
 static const char *TAG = "ADC_READER";
 
 // Hardware constants
-// #define R1      30000.0f // Ohms
-// #define R2      2200.0f  // Ohms
-#define R1      1000000.0f // 1M Ohm
-#define R2      56000.0f   // 56k Ohm
+#define R1      30000.0f // Ohms
+#define R2      2200.0f  // Ohms
+// #define R1      1000000.0f // 1M Ohm
+// #define R2      56000.0f   // 56k Ohm
 #define SHUNT_RESISTOR 0.005f // Ohms
 #define GAIN    20.0f
 #define VREF_V  1.65f
