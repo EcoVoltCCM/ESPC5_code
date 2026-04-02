@@ -11,11 +11,15 @@
 
 class MQTTClient {
 private:
+    static constexpr int MQTT_QOS = 1;
+    static constexpr int MQTT_RETAIN = 0;
+
     struct PublishDiagnostics {
         uint32_t publish_attempts = 0;
         uint32_t publish_success = 0;
         uint32_t publish_fail = 0;
         uint32_t consecutive_failures = 0;
+        uint32_t published_events = 0;
         int last_result = 0;
         size_t last_payload_bytes = 0;
         int64_t last_json_build_ms = 0;
@@ -41,5 +45,6 @@ public:
     bool initialize();
     bool waitForConnection(uint32_t timeout_ms = 30000);
     bool isConnected() const;
+    int outboxSize() const;
     bool publish(const TelemetryData& telemetry, int* out_result = nullptr, size_t* out_payload_bytes = nullptr);
 };

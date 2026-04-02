@@ -25,6 +25,8 @@ void MQTTClient::mqttEventHandler(void *handler_args, esp_event_base_t base, int
     esp_mqtt_event_handle_t event = static_cast<esp_mqtt_event_handle_t>(event_data);
     instance->diagnostics.last_event_ms = esp_timer_get_time() / 1000;
 
+    (void)base;
+
     if (event->event_id == MQTT_EVENT_CONNECTED) {
         instance->diagnostics.connected_events++;
         instance->diagnostics.consecutive_failures = 0;
@@ -40,6 +42,15 @@ void MQTTClient::mqttEventHandler(void *handler_args, esp_event_base_t base, int
                  outbox,
                  (unsigned)instance->diagnostics.consecutive_failures);
         xEventGroupClearBits(instance->event_group, CONNECTED_BIT);
+    } else if (event->event_id == MQTT_EVENT_PUBLISHED) {
+        instance->diagnostics.published_events++;
+        if ((instance->diagnostics.published_events % 100) == 0) {
+            int outbox = esp_mqtt_client_get_outbox_size(instance->client);
+            ESP_LOGI(TAG,
+                     "MQTT ack stats: published=%u outbox=%d",
+                     (unsigned)instance->diagnostics.published_events,
+                     outbox);
+        }
     } else if (event->event_id == MQTT_EVENT_ERROR) {
         instance->diagnostics.error_events++;
         ESP_LOGE(TAG, "MQTT error event: count=%u type=%d", 
@@ -73,6 +84,15 @@ bool MQTTClient::initialize() {
     mqtt_cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
     mqtt_cfg.credentials.username = TelemetryConfig::MQTT_USERNAME;
     mqtt_cfg.credentials.client_id = client_id.c_str();
+    mqtt_cfg.network.disable_auto_reconnect = false;
+    mqtt_cfg.network.reconnect_timeout_ms = 2000;
+    mqtt_cfg.session.keepalive = 30;
+    mqtt_cfg.session.disable_clean_session = false;
+    mqtt_cfg.session.message_retransmit_timeout = 3000;
+    mqtt_cfg.session.disable_keepalive = false;
+    mqtt_cfg.buffer.size = 2048;
+    mqtt_cfg.buffer.out_size = 2048;
+    mqtt_cfg.outbox.limit = 65536;
     
     client = esp_mqtt_client_init(&mqtt_cfg);
     if (!client) return false;
@@ -90,30 +110,14 @@ bool MQTTClient::isConnected() const {
     return (xEventGroupGetBits(event_group) & CONNECTED_BIT) != 0;
 }
 
+int MQTTClient::outboxSize() const {
+    if (!client) return -1;
+    return esp_mqtt_client_get_outbox_size(client);
+}
+
 bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t* out_payload_bytes) {
     diagnostics.publish_attempts++;
-
-    if (!(xEventGroupGetBits(event_group) & CONNECTED_BIT)) {
-        diagnostics.publish_fail++;
-        diagnostics.consecutive_failures++;
-        diagnostics.last_result = -2;
-        diagnostics.last_payload_bytes = 0;
-        diagnostics.last_json_build_ms = 0;
-        diagnostics.last_enqueue_ms = 0;
-        if (out_result) *out_result = -2;
-        if (out_payload_bytes) *out_payload_bytes = 0;
-
-        if ((diagnostics.publish_attempts % 10) == 0 || diagnostics.consecutive_failures == 1) {
-            ESP_LOGW(TAG,
-                     "Publish skipped (disconnected): msg=%d attempts=%u fail=%u streak=%u outbox=%d",
-                     telemetry.data.message_id,
-                     (unsigned)diagnostics.publish_attempts,
-                     (unsigned)diagnostics.publish_fail,
-                     (unsigned)diagnostics.consecutive_failures,
-                     esp_mqtt_client_get_outbox_size(client));
-        }
-        return false;
-    }
+    bool connected_now = isConnected();
 
     int64_t json_start_us = esp_timer_get_time();
     auto json = telemetry.toJSON();
@@ -137,8 +141,22 @@ bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t
     }
 
     size_t payload_bytes = strlen(json_string);
+
+    if (payload_bytes > 1300) {
+        ESP_LOGW(TAG,
+                 "Payload unusually large: msg=%d payload=%uB",
+                 telemetry.data.message_id,
+                 (unsigned)payload_bytes);
+    }
+
     int64_t publish_start_us = esp_timer_get_time();
-    int msg_id = esp_mqtt_client_publish(client, TelemetryConfig::ABLY_CHANNEL, json_string, 0, 0, 0);
+    int msg_id = esp_mqtt_client_enqueue(client,
+                                         TelemetryConfig::ABLY_CHANNEL,
+                                         json_string,
+                                         0,
+                                         MQTT_QOS,
+                                         MQTT_RETAIN,
+                                         true);
     int64_t publish_end_us = esp_timer_get_time();
 
     diagnostics.last_result = msg_id;
@@ -149,35 +167,37 @@ bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t
     if (out_result) *out_result = msg_id;
     if (out_payload_bytes) *out_payload_bytes = payload_bytes;
 
-    int outbox = esp_mqtt_client_get_outbox_size(client);
-
     if (msg_id >= 0) {
         diagnostics.publish_success++;
         diagnostics.consecutive_failures = 0;
 
-        if ((diagnostics.publish_success % 50) == 0 || outbox > 0) {
+        if ((diagnostics.publish_success % 50) == 0 || diagnostics.last_enqueue_ms > 50 || !connected_now) {
+            int outbox = esp_mqtt_client_get_outbox_size(client);
             ESP_LOGI(TAG,
-                     "Publish ok: msg=%d mqtt_msg_id=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d ok=%u fail=%u",
+                     "Publish ok: msg=%d mqtt_msg_id=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d connected=%d ok=%u fail=%u",
                      telemetry.data.message_id,
                      msg_id,
                      (unsigned)payload_bytes,
                      (long long)diagnostics.last_json_build_ms,
                      (long long)diagnostics.last_enqueue_ms,
                      outbox,
+                     connected_now ? 1 : 0,
                      (unsigned)diagnostics.publish_success,
                      (unsigned)diagnostics.publish_fail);
         }
     } else {
         diagnostics.publish_fail++;
         diagnostics.consecutive_failures++;
+        int outbox = esp_mqtt_client_get_outbox_size(client);
         ESP_LOGE(TAG,
-                 "MQTT enqueue failed: msg=%d result=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d attempts=%u ok=%u fail=%u streak=%u topic=%s",
+                 "MQTT enqueue failed: msg=%d result=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d connected=%d attempts=%u ok=%u fail=%u streak=%u topic=%s",
                  telemetry.data.message_id,
                  msg_id,
                  (unsigned)payload_bytes,
                  (long long)diagnostics.last_json_build_ms,
                  (long long)diagnostics.last_enqueue_ms,
                  outbox,
+                 connected_now ? 1 : 0,
                  (unsigned)diagnostics.publish_attempts,
                  (unsigned)diagnostics.publish_success,
                  (unsigned)diagnostics.publish_fail,

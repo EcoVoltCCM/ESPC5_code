@@ -248,12 +248,16 @@ void TelemetrySystem::sensor_loop() {
 void TelemetrySystem::sink_loop() {
     TelemetryData telemetry;
     int records_since_flush = 0;
+    int64_t high_block_mqtt_ms = 0;
+    int64_t high_block_sd_ms = 0;
+    int64_t high_e2e_ms = 0;
 
     while (true) {
         if (xQueueReceive(telemetry_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
             int64_t start_time = esp_timer_get_time();
             bool wifi_conn = wifi_manager.isConnected();
             bool mqtt_conn = mqtt_client.isConnected();
+            int mqtt_outbox = mqtt_client.outboxSize();
             UBaseType_t items_waiting = uxQueueMessagesWaiting(telemetry_queue);
             int64_t queue_delay_ms = (telemetry.debug_created_us > 0)
                                        ? ((start_time - telemetry.debug_created_us) / 1000)
@@ -263,14 +267,15 @@ void TelemetrySystem::sink_loop() {
             if (queue_delay_ms > (int64_t)(TelemetryConfig::PUBLISH_INTERVAL * 2) ||
                 items_waiting > (QUEUE_SIZE * 0.3)) {
                 ESP_LOGW(TAG,
-                         "Queue delay detected: msg=%d delay=%lldms queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d",
+                         "Queue delay detected: msg=%d delay=%lldms queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d outbox=%d",
                          (int)telemetry.data.message_id,
                          (long long)queue_delay_ms,
                          (unsigned)items_waiting,
                          (unsigned)QUEUE_SIZE,
                          (long long)backlog_est_ms,
                          wifi_conn ? 1 : 0,
-                         mqtt_conn ? 1 : 0);
+                         mqtt_conn ? 1 : 0,
+                         mqtt_outbox);
             }
              
             // 1. MQTT Publish
@@ -278,26 +283,28 @@ void TelemetrySystem::sink_loop() {
             int mqtt_result = -5;
             size_t payload_bytes = 0;
             bool mqtt_sent = false;
-            if (items_waiting < (QUEUE_SIZE * 0.8)) {
-                mqtt_sent = mqtt_client.publish(telemetry, &mqtt_result, &payload_bytes);
-                if (mqtt_sent) {
+            mqtt_sent = mqtt_client.publish(telemetry, &mqtt_result, &payload_bytes);
+            if (mqtt_sent) {
+                if (items_waiting < 5) {
                     led_indicator.flash_success(wifi_conn);
-                    if (telemetry.data.message_id % 50 == 0) {
-                        ESP_LOGI(TAG, "Sent #%d over MQTT (5Hz)", (int)telemetry.data.message_id);
-                    }
-                } else {
+                }
+                if (telemetry.data.message_id % 50 == 0) {
+                    ESP_LOGI(TAG, "Sent #%d over MQTT (5Hz)", (int)telemetry.data.message_id);
+                }
+            } else {
+                if (items_waiting < 5) {
                     led_indicator.flash_error(wifi_conn);
                 }
-            } else if (telemetry.data.message_id % 10 == 0) {
-                mqtt_result = -4;
-                ESP_LOGW(TAG,
-                         "Critical congestion: queue=%u/%u skip_mqtt msg=%d queue_delay=%lldms backlog_est=%lldms uptime=%lldms",
-                         (unsigned)items_waiting,
-                         (unsigned)QUEUE_SIZE,
-                         (int)telemetry.data.message_id,
-                         (long long)queue_delay_ms,
-                         (long long)backlog_est_ms,
-                         (long long)(esp_timer_get_time() / 1000));
+                if (items_waiting > (QUEUE_SIZE * 0.7) && (telemetry.data.message_id % 10 == 0)) {
+                    ESP_LOGW(TAG,
+                             "Critical congestion with publish failure: queue=%u/%u msg=%d queue_delay=%lldms backlog_est=%lldms uptime=%lldms",
+                             (unsigned)items_waiting,
+                             (unsigned)QUEUE_SIZE,
+                             (int)telemetry.data.message_id,
+                             (long long)queue_delay_ms,
+                             (long long)backlog_est_ms,
+                             (long long)(esp_timer_get_time() / 1000));
+                }
             }
             int64_t mqtt_end = esp_timer_get_time();
 
@@ -315,12 +322,22 @@ void TelemetrySystem::sink_loop() {
             int64_t sd_dur = (sd_end - sd_start) / 1000;
             int64_t total_dur = (esp_timer_get_time() - start_time) / 1000;
 
+            if (mqtt_dur > high_block_mqtt_ms) {
+                high_block_mqtt_ms = mqtt_dur;
+            }
+            if (sd_dur > high_block_sd_ms) {
+                high_block_sd_ms = sd_dur;
+            }
+            if (queue_delay_ms > high_e2e_ms) {
+                high_e2e_ms = queue_delay_ms;
+            }
+
             if (total_dur > 50 ||
                 (int)items_waiting > (QUEUE_SIZE * 0.5) ||
                 !mqtt_sent ||
                 queue_delay_ms > 400) {
                 ESP_LOGI(TAG,
-                         "Sink Perf: msg=%d e2e=%lldms total=%lldms (MQTT=%lldms,res=%d,payload=%uB SD=%lldms) queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d",
+                         "Sink Perf: msg=%d e2e=%lldms total=%lldms (MQTT=%lldms,res=%d,payload=%uB SD=%lldms) queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d outbox=%d highs[e2e=%lld,mqtt=%lld,sd=%lld]",
                          (int)telemetry.data.message_id,
                          (long long)queue_delay_ms,
                          (long long)total_dur,
@@ -332,7 +349,24 @@ void TelemetrySystem::sink_loop() {
                          (unsigned)QUEUE_SIZE,
                          (long long)backlog_est_ms,
                          wifi_conn ? 1 : 0,
-                         mqtt_conn ? 1 : 0);
+                         mqtt_conn ? 1 : 0,
+                         mqtt_outbox,
+                         (long long)high_e2e_ms,
+                         (long long)high_block_mqtt_ms,
+                         (long long)high_block_sd_ms);
+            }
+
+            if (mqtt_dur > (int64_t)TelemetryConfig::PUBLISH_INTERVAL && items_waiting > 0) {
+                ESP_LOGW(TAG,
+                         "MQTT block over budget: msg=%d mqtt=%lldms budget=%lums queue=%u/%u res=%d payload=%uB outbox=%d",
+                         (int)telemetry.data.message_id,
+                         (long long)mqtt_dur,
+                         (unsigned long)TelemetryConfig::PUBLISH_INTERVAL,
+                         (unsigned)items_waiting,
+                         (unsigned)QUEUE_SIZE,
+                         mqtt_result,
+                         (unsigned)payload_bytes,
+                         mqtt_outbox);
             }
         }
     }
