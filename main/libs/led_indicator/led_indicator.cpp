@@ -66,7 +66,7 @@ void LEDIndicator::set_sd_detected() {
 
 void LEDIndicator::flash_sd_write() {
     set_color(0, 0, 128); // Half of 255 (approx)
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(5));
     // Restore WiFi status color
     if (wifi_connected) set_wifi_connected();
     else set_wifi_disconnected();
@@ -74,14 +74,14 @@ void LEDIndicator::flash_sd_write() {
 
 void LEDIndicator::flash_success(bool connected) {
     set_color(0, 64, 0); // Half of 128
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(10));
     if (connected) set_wifi_connected();
     else set_wifi_disconnected();
 }
 
 void LEDIndicator::flash_error(bool connected) {
     set_color(64, 0, 0); // Half of 128
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(10));
     if (connected) set_wifi_connected();
     else set_wifi_disconnected();
 }
