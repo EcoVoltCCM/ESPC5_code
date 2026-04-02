@@ -38,7 +38,8 @@ void LEDIndicator::initialize(gpio_num_t gpio_num) {
 
 void LEDIndicator::set_color(uint32_t red, uint32_t green, uint32_t blue) {
     if (!is_initialized) return;
-    led_strip_set_pixel(led_strip, 0, red, green, blue);
+    // Reduce intensity to half
+    led_strip_set_pixel(led_strip, 0, red / 2, green / 2, blue / 2);
     led_strip_refresh(led_strip);
 }
 
@@ -49,22 +50,22 @@ void LEDIndicator::set_wifi_connecting() {
 
 void LEDIndicator::set_wifi_connected() {
     wifi_connected = true;
-    // Very Dim Green for connected
-    set_color(0, 64, 0);
+    // Half of previous 64
+    set_color(0, 32, 0);
 }
 
 void LEDIndicator::set_wifi_disconnected() {
     wifi_connected = false;
-    // Very Dim Red for disconnected
-    set_color(64, 0, 0);
+    // Half of previous 64
+    set_color(32, 0, 0);
 }
 
 void LEDIndicator::set_sd_detected() {
-    set_color(0, 0, 255); // Full Blue
+    set_color(0, 0, 128); // Half of 255 (approx)
 }
 
 void LEDIndicator::flash_sd_write() {
-    set_color(0, 0, 255); // Full Blue flash
+    set_color(0, 0, 128); // Half of 255 (approx)
     vTaskDelay(pdMS_TO_TICKS(20));
     // Restore WiFi status color
     if (wifi_connected) set_wifi_connected();
@@ -72,14 +73,14 @@ void LEDIndicator::flash_sd_write() {
 }
 
 void LEDIndicator::flash_success(bool connected) {
-    set_color(0, 128, 0); // Bright Green
+    set_color(0, 64, 0); // Half of 128
     vTaskDelay(pdMS_TO_TICKS(50));
     if (connected) set_wifi_connected();
     else set_wifi_disconnected();
 }
 
 void LEDIndicator::flash_error(bool connected) {
-    set_color(128, 0, 0); // Bright Red
+    set_color(64, 0, 0); // Half of 128
     vTaskDelay(pdMS_TO_TICKS(50));
     if (connected) set_wifi_connected();
     else set_wifi_disconnected();
