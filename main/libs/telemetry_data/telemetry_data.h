@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <cstdint>
 #include "cJSON.h"
 
 class TelemetryData {
@@ -34,6 +35,7 @@ public:
     };
 
     SensorData data;
+    int64_t debug_created_us = 0;
 
     std::unique_ptr<cJSON, decltype(&cJSON_Delete)> toJSON() const;
     std::string toCSV() const;

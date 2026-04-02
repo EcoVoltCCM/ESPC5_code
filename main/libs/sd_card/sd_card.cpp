@@ -120,6 +120,10 @@ esp_err_t SDCard::write_telemetry(const TelemetryData& telemetry, int& records_s
 esp_err_t SDCard::flush(int& records_since_flush) {
     if (buffer.empty()) return ESP_OK;
 
+    int64_t flush_start_us = esp_timer_get_time();
+    size_t bytes_to_write = buffer.size();
+    int records_to_flush = records_since_flush;
+
     FILE* f = fopen(file_path, "a");
     if (f == NULL) {
         ESP_LOGE(TAG, "Failed to open file for flushing");
@@ -134,8 +138,28 @@ esp_err_t SDCard::flush(int& records_since_flush) {
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Synced %d records to SD card (%zu bytes)", records_since_flush, buffer.size());
-    
+    int64_t flush_ms = (esp_timer_get_time() - flush_start_us) / 1000;
+    size_t avg_record_bytes = (records_to_flush > 0) ? (bytes_to_write / (size_t)records_to_flush) : 0;
+    uint32_t throughput_bps = (flush_ms > 0) ? (uint32_t)((bytes_to_write * 1000ULL) / (uint64_t)flush_ms) : 0;
+    uint32_t buffer_pct = (uint32_t)((bytes_to_write * 100ULL) / MAX_BUFFER_SIZE);
+
+    ESP_LOGI(TAG,
+             "SD flush: records=%d bytes=%u avg_record=%uB flush=%lldms throughput=%uB/s buffer=%u%%",
+             records_to_flush,
+             (unsigned)bytes_to_write,
+             (unsigned)avg_record_bytes,
+             (long long)flush_ms,
+             (unsigned)throughput_bps,
+             (unsigned)buffer_pct);
+
+    if (flush_ms > 120) {
+        ESP_LOGW(TAG,
+                 "Slow SD flush detected: %lldms for %u bytes (%d records)",
+                 (long long)flush_ms,
+                 (unsigned)bytes_to_write,
+                 records_to_flush);
+    }
+     
     buffer.clear();
     records_since_flush = 0;
     last_flush_time = esp_timer_get_time() / 1000;

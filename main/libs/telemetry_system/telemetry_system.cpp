@@ -114,11 +114,17 @@ void TelemetrySystem::run() {
 void TelemetrySystem::sensor_loop() {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(TelemetryConfig::PUBLISH_INTERVAL);
+    last_tick_time = esp_timer_get_time();
 
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        int64_t sample_time_us = esp_timer_get_time();
+        int64_t loop_period_ms = (sample_time_us - last_tick_time) / 1000;
+        int64_t loop_jitter_ms = loop_period_ms - (int64_t)TelemetryConfig::PUBLISH_INTERVAL;
+        last_tick_time = sample_time_us;
 
         TelemetryData telemetry;
+        telemetry.debug_created_us = sample_time_us;
         
         // Read Internal ADC (Voltage/Current) - 200 samples, energy integration, and peak tracking
         float avg_voltage, avg_current, max_current, max_power, avg_power;
@@ -193,9 +199,48 @@ void TelemetrySystem::sensor_loop() {
         telemetry.data.energy_j = cumulative_energy;
         telemetry.data.distance_m = cumulative_distance;
 
+        bool bad_numeric =
+            !std::isfinite(avg_voltage) ||
+            !std::isfinite(avg_current) ||
+            !std::isfinite(avg_power) ||
+            !std::isfinite(cumulative_energy) ||
+            !std::isfinite(cumulative_distance) ||
+            !std::isfinite(speed_ms) ||
+            !std::isfinite(total_acceleration);
+
+        if (bad_numeric) {
+            ESP_LOGW(TAG,
+                     "Invalid sensor numeric data: msg=%d V=%.3f I=%.3f P=%.3f E=%.3f D=%.3f speed=%.3f accel=%.3f",
+                     (int)telemetry.data.message_id,
+                     avg_voltage,
+                     avg_current,
+                     avg_power,
+                     cumulative_energy,
+                     cumulative_distance,
+                     speed_ms,
+                     total_acceleration);
+        }
+
+        if (loop_jitter_ms > 30 || loop_jitter_ms < -30) {
+            ESP_LOGW(TAG,
+                     "Sensor timing jitter: msg=%d period=%lldms expected=%lums jitter=%+lldms queue=%u",
+                     (int)telemetry.data.message_id,
+                     (long long)loop_period_ms,
+                     (unsigned long)TelemetryConfig::PUBLISH_INTERVAL,
+                     (long long)loop_jitter_ms,
+                     (unsigned)uxQueueMessagesWaiting(telemetry_queue));
+        }
+
         // Send to sink task
         if (xQueueSend(telemetry_queue, &telemetry, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "Telemetry queue full, dropping record!");
+            ESP_LOGW(TAG,
+                     "Telemetry drop: queue full msg=%d queue=%u/%u speed=%.2fm/s V=%.2fV I=%.2fA",
+                     (int)telemetry.data.message_id,
+                     (unsigned)uxQueueMessagesWaiting(telemetry_queue),
+                     (unsigned)QUEUE_SIZE,
+                     telemetry.data.speed_ms,
+                     telemetry.data.voltage_v,
+                     telemetry.data.current_a);
         }
     }
 }
@@ -208,12 +253,34 @@ void TelemetrySystem::sink_loop() {
         if (xQueueReceive(telemetry_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
             int64_t start_time = esp_timer_get_time();
             bool wifi_conn = wifi_manager.isConnected();
+            bool mqtt_conn = mqtt_client.isConnected();
             UBaseType_t items_waiting = uxQueueMessagesWaiting(telemetry_queue);
-            
+            int64_t queue_delay_ms = (telemetry.debug_created_us > 0)
+                                       ? ((start_time - telemetry.debug_created_us) / 1000)
+                                       : -1;
+            int64_t backlog_est_ms = (int64_t)items_waiting * (int64_t)TelemetryConfig::PUBLISH_INTERVAL;
+
+            if (queue_delay_ms > (int64_t)(TelemetryConfig::PUBLISH_INTERVAL * 2) ||
+                items_waiting > (QUEUE_SIZE * 0.3)) {
+                ESP_LOGW(TAG,
+                         "Queue delay detected: msg=%d delay=%lldms queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d",
+                         (int)telemetry.data.message_id,
+                         (long long)queue_delay_ms,
+                         (unsigned)items_waiting,
+                         (unsigned)QUEUE_SIZE,
+                         (long long)backlog_est_ms,
+                         wifi_conn ? 1 : 0,
+                         mqtt_conn ? 1 : 0);
+            }
+             
             // 1. MQTT Publish
             int64_t mqtt_start = esp_timer_get_time();
+            int mqtt_result = -5;
+            size_t payload_bytes = 0;
+            bool mqtt_sent = false;
             if (items_waiting < (QUEUE_SIZE * 0.8)) {
-                if (mqtt_client.publish(telemetry)) {
+                mqtt_sent = mqtt_client.publish(telemetry, &mqtt_result, &payload_bytes);
+                if (mqtt_sent) {
                     led_indicator.flash_success(wifi_conn);
                     if (telemetry.data.message_id % 50 == 0) {
                         ESP_LOGI(TAG, "Sent #%d over MQTT (5Hz)", (int)telemetry.data.message_id);
@@ -222,8 +289,15 @@ void TelemetrySystem::sink_loop() {
                     led_indicator.flash_error(wifi_conn);
                 }
             } else if (telemetry.data.message_id % 10 == 0) {
-                ESP_LOGW(TAG, "Critical Congestion! Queue=%d, skipping MQTT. App uptime: %lld ms", 
-                         (int)items_waiting, (long long)(esp_timer_get_time() / 1000));
+                mqtt_result = -4;
+                ESP_LOGW(TAG,
+                         "Critical congestion: queue=%u/%u skip_mqtt msg=%d queue_delay=%lldms backlog_est=%lldms uptime=%lldms",
+                         (unsigned)items_waiting,
+                         (unsigned)QUEUE_SIZE,
+                         (int)telemetry.data.message_id,
+                         (long long)queue_delay_ms,
+                         (long long)backlog_est_ms,
+                         (long long)(esp_timer_get_time() / 1000));
             }
             int64_t mqtt_end = esp_timer_get_time();
 
@@ -241,9 +315,24 @@ void TelemetrySystem::sink_loop() {
             int64_t sd_dur = (sd_end - sd_start) / 1000;
             int64_t total_dur = (esp_timer_get_time() - start_time) / 1000;
 
-            if (total_dur > 50 || (int)items_waiting > (QUEUE_SIZE * 0.5)) {
-                ESP_LOGI(TAG, "Sink Perf: Total=%lldms (MQTT=%lldms, SD=%lldms) Queue=%d", 
-                         total_dur, mqtt_dur, sd_dur, (int)items_waiting);
+            if (total_dur > 50 ||
+                (int)items_waiting > (QUEUE_SIZE * 0.5) ||
+                !mqtt_sent ||
+                queue_delay_ms > 400) {
+                ESP_LOGI(TAG,
+                         "Sink Perf: msg=%d e2e=%lldms total=%lldms (MQTT=%lldms,res=%d,payload=%uB SD=%lldms) queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d",
+                         (int)telemetry.data.message_id,
+                         (long long)queue_delay_ms,
+                         (long long)total_dur,
+                         (long long)mqtt_dur,
+                         mqtt_result,
+                         (unsigned)payload_bytes,
+                         (long long)sd_dur,
+                         (unsigned)items_waiting,
+                         (unsigned)QUEUE_SIZE,
+                         (long long)backlog_est_ms,
+                         wifi_conn ? 1 : 0,
+                         mqtt_conn ? 1 : 0);
             }
         }
     }
