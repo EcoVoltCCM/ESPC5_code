@@ -5,11 +5,69 @@
 #include "esp_crt_bundle.h"
 #include "mqtt_client.h" // Use the public header for the MQTT component
 #include "esp_timer.h"
+#include "esp_netif.h"
+#include "lwip/ip4_addr.h"
+#include "lwip/ip_addr.h"
 #include <sstream>
 #include <iomanip>
 #include <cstring>
 
 static const char *TAG = "MQTT_CLIENT";
+static int64_t s_last_dns_recovery_ms = 0;
+
+static bool isDnsTransportError(esp_mqtt_event_handle_t event) {
+    if (!event || !event->error_handle) return false;
+
+    const int tls_err = event->error_handle->esp_tls_last_esp_err;
+    const int tls_stack_err = event->error_handle->esp_tls_stack_err;
+    const int sock_errno = event->error_handle->esp_transport_sock_errno;
+
+    // 0x8001 commonly maps to hostname resolution failure in esp-tls path.
+    if (tls_err == 0x8001) return true;
+
+    // Some DNS/getaddrinfo failures bubble up as transport error with no errno.
+    if (sock_errno == 0 && tls_err == 0 && tls_stack_err == 0) return true;
+
+    return false;
+}
+
+static void applyDnsRecovery() {
+    esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!sta_netif) {
+        ESP_LOGW(TAG, "DNS recovery skipped: WIFI_STA_DEF netif not found");
+        return;
+    }
+
+    esp_netif_dns_info_t old_main = {};
+    esp_netif_dns_info_t old_backup = {};
+    esp_netif_dns_info_t old_fallback = {};
+    esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &old_main);
+    esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_BACKUP, &old_backup);
+    esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_FALLBACK, &old_fallback);
+
+    ESP_LOGW(TAG,
+             "Applying DNS recovery. Previous DNS main=" IPSTR " backup=" IPSTR " fallback=" IPSTR,
+             IP2STR(&old_main.ip.u_addr.ip4),
+             IP2STR(&old_backup.ip.u_addr.ip4),
+             IP2STR(&old_fallback.ip.u_addr.ip4));
+
+    esp_netif_dns_info_t dns_main = {};
+    dns_main.ip.type = ESP_IPADDR_TYPE_V4;
+    ip4addr_aton("8.8.8.8", &dns_main.ip.u_addr.ip4);
+    ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &dns_main));
+
+    esp_netif_dns_info_t dns_backup = {};
+    dns_backup.ip.type = ESP_IPADDR_TYPE_V4;
+    ip4addr_aton("1.1.1.1", &dns_backup.ip.u_addr.ip4);
+    ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_BACKUP, &dns_backup));
+
+    esp_netif_dns_info_t dns_fallback = {};
+    dns_fallback.ip.type = ESP_IPADDR_TYPE_V4;
+    ip4addr_aton("9.9.9.9", &dns_fallback.ip.u_addr.ip4);
+    ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_FALLBACK, &dns_fallback));
+
+    ESP_LOGW(TAG, "DNS recovery applied: main=8.8.8.8 backup=1.1.1.1 fallback=9.9.9.9");
+}
 
 std::string MQTTClient::generateClientId() {
     uint8_t mac[6];
@@ -60,6 +118,16 @@ void MQTTClient::mqttEventHandler(void *handler_args, esp_event_base_t base, int
             ESP_LOGE(TAG, "Last error: %s", strerror(event->error_handle->esp_transport_sock_errno));
             ESP_LOGE(TAG, "Transport error: 0x%x", event->error_handle->esp_tls_last_esp_err);
             ESP_LOGE(TAG, "TLS stack error: 0x%x", event->error_handle->esp_tls_stack_err);
+
+            if (isDnsTransportError(event)) {
+                const int64_t now_ms = esp_timer_get_time() / 1000;
+                if ((now_ms - s_last_dns_recovery_ms) > 10000) {
+                    s_last_dns_recovery_ms = now_ms;
+                    applyDnsRecovery();
+                    ESP_LOGW(TAG, "DNS failure detected, forcing MQTT reconnect");
+                    esp_mqtt_client_reconnect(instance->client);
+                }
+            }
         }
     }
 }
@@ -118,7 +186,6 @@ int MQTTClient::outboxSize() const {
 bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t* out_payload_bytes) {
     diagnostics.publish_attempts++;
     bool connected_now = isConnected();
-    int outbox_before = outboxSize();
 
     if (!connected_now) {
         diagnostics.publish_fail++;
@@ -133,14 +200,16 @@ bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t
 
         if ((diagnostics.skipped_disconnected % 25) == 1 || diagnostics.consecutive_failures == 1) {
             ESP_LOGW(TAG,
-                     "MQTT disconnected, publish skipped: msg=%d outbox=%d fail=%u disc_skip=%u",
+                     "MQTT disconnected, publish skipped: msg=%d fail=%u disc_skip=%u",
                      telemetry.data.message_id,
-                     outbox_before,
                      (unsigned)diagnostics.publish_fail,
                      (unsigned)diagnostics.skipped_disconnected);
         }
         return false;
     }
+
+    int outbox_before = outboxSize();
+    if (outbox_before < 0) outbox_before = 0;
 
     if (outbox_before >= OUTBOX_HARD_LIMIT_BYTES) {
         diagnostics.publish_fail++;

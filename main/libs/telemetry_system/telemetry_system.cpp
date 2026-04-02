@@ -257,7 +257,6 @@ void TelemetrySystem::sink_loop() {
             int64_t start_time = esp_timer_get_time();
             bool wifi_conn = wifi_manager.isConnected();
             bool mqtt_conn = mqtt_client.isConnected();
-            int mqtt_outbox = mqtt_client.outboxSize();
             UBaseType_t items_waiting = uxQueueMessagesWaiting(telemetry_queue);
             int64_t queue_delay_ms = (telemetry.debug_created_us > 0)
                                        ? ((start_time - telemetry.debug_created_us) / 1000)
@@ -267,15 +266,14 @@ void TelemetrySystem::sink_loop() {
             if (queue_delay_ms > (int64_t)(TelemetryConfig::PUBLISH_INTERVAL * 2) ||
                 items_waiting > (QUEUE_SIZE * 0.3)) {
                 ESP_LOGW(TAG,
-                         "Queue delay detected: msg=%d delay=%lldms queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d outbox=%d",
+                         "Queue delay detected: msg=%d delay=%lldms queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d",
                          (int)telemetry.data.message_id,
                          (long long)queue_delay_ms,
                          (unsigned)items_waiting,
                          (unsigned)QUEUE_SIZE,
                          (long long)backlog_est_ms,
                          wifi_conn ? 1 : 0,
-                         mqtt_conn ? 1 : 0,
-                         mqtt_outbox);
+                         mqtt_conn ? 1 : 0);
             }
              
             // 1. MQTT Publish
@@ -283,7 +281,13 @@ void TelemetrySystem::sink_loop() {
             int mqtt_result = -5;
             size_t payload_bytes = 0;
             bool mqtt_sent = false;
-            mqtt_sent = mqtt_client.publish(telemetry, &mqtt_result, &payload_bytes);
+            bool should_attempt_mqtt = (items_waiting < (QUEUE_SIZE * 0.6)) || ((telemetry.data.message_id % 10) == 0);
+            if (should_attempt_mqtt) {
+                mqtt_sent = mqtt_client.publish(telemetry, &mqtt_result, &payload_bytes);
+            } else {
+                mqtt_result = -7;
+            }
+
             if (mqtt_sent) {
                 if (items_waiting < 5) {
                     led_indicator.flash_success(wifi_conn);
@@ -295,7 +299,14 @@ void TelemetrySystem::sink_loop() {
                 if (items_waiting < 5) {
                     led_indicator.flash_error(wifi_conn);
                 }
-                if (items_waiting > (QUEUE_SIZE * 0.7) && (telemetry.data.message_id % 10 == 0)) {
+                if (!should_attempt_mqtt && (telemetry.data.message_id % 20 == 0)) {
+                    ESP_LOGW(TAG,
+                             "MQTT temporarily throttled due to backlog: msg=%d queue=%u/%u backlog_est=%lldms",
+                             (int)telemetry.data.message_id,
+                             (unsigned)items_waiting,
+                             (unsigned)QUEUE_SIZE,
+                             (long long)backlog_est_ms);
+                } else if (items_waiting > (QUEUE_SIZE * 0.7) && (telemetry.data.message_id % 10 == 0)) {
                     ESP_LOGW(TAG,
                              "Critical congestion with publish failure: queue=%u/%u msg=%d queue_delay=%lldms backlog_est=%lldms uptime=%lldms",
                              (unsigned)items_waiting,
@@ -334,10 +345,10 @@ void TelemetrySystem::sink_loop() {
 
             if (total_dur > 50 ||
                 (int)items_waiting > (QUEUE_SIZE * 0.5) ||
-                !mqtt_sent ||
+                ((mqtt_result != -2) && (mqtt_result != -7) && !mqtt_sent) ||
                 queue_delay_ms > 400) {
                 ESP_LOGI(TAG,
-                         "Sink Perf: msg=%d e2e=%lldms total=%lldms (MQTT=%lldms,res=%d,payload=%uB SD=%lldms) queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d outbox=%d highs[e2e=%lld,mqtt=%lld,sd=%lld]",
+                         "Sink Perf: msg=%d e2e=%lldms total=%lldms (MQTT=%lldms,res=%d,payload=%uB SD=%lldms) queue=%u/%u backlog_est=%lldms wifi=%d mqtt=%d highs[e2e=%lld,mqtt=%lld,sd=%lld]",
                          (int)telemetry.data.message_id,
                          (long long)queue_delay_ms,
                          (long long)total_dur,
@@ -350,7 +361,6 @@ void TelemetrySystem::sink_loop() {
                          (long long)backlog_est_ms,
                          wifi_conn ? 1 : 0,
                          mqtt_conn ? 1 : 0,
-                         mqtt_outbox,
                          (long long)high_e2e_ms,
                          (long long)high_block_mqtt_ms,
                          (long long)high_block_sd_ms);
@@ -358,25 +368,23 @@ void TelemetrySystem::sink_loop() {
 
             if (!mqtt_conn && (telemetry.data.message_id % 10 == 0)) {
                 ESP_LOGW(TAG,
-                         "MQTT offline mode: msg=%d queue=%u/%u outbox=%d wifi=%d -> storing to SD only",
+                         "MQTT offline mode: msg=%d queue=%u/%u wifi=%d -> storing to SD only",
                          (int)telemetry.data.message_id,
                          (unsigned)items_waiting,
                          (unsigned)QUEUE_SIZE,
-                         mqtt_outbox,
                          wifi_conn ? 1 : 0);
             }
 
             if (mqtt_dur > (int64_t)TelemetryConfig::PUBLISH_INTERVAL && items_waiting > 0) {
                 ESP_LOGW(TAG,
-                         "MQTT block over budget: msg=%d mqtt=%lldms budget=%lums queue=%u/%u res=%d payload=%uB outbox=%d",
+                         "MQTT block over budget: msg=%d mqtt=%lldms budget=%lums queue=%u/%u res=%d payload=%uB",
                          (int)telemetry.data.message_id,
                          (long long)mqtt_dur,
                          (unsigned long)TelemetryConfig::PUBLISH_INTERVAL,
                          (unsigned)items_waiting,
                          (unsigned)QUEUE_SIZE,
                          mqtt_result,
-                         (unsigned)payload_bytes,
-                         mqtt_outbox);
+                         (unsigned)payload_bytes);
             }
         }
     }

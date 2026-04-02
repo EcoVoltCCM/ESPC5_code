@@ -26,19 +26,18 @@ static void ensureDnsServers() {
              IP2STR(&dns_main.ip.u_addr.ip4),
              IP2STR(&dns_backup.ip.u_addr.ip4));
 
-    if (dns_main.ip.u_addr.ip4.addr == 0) {
-        esp_netif_dns_info_t fallback_main = {};
-        fallback_main.ip.type = ESP_IPADDR_TYPE_V4;
-        ip4addr_aton("8.8.8.8", &fallback_main.ip.u_addr.ip4);
-        ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &fallback_main));
+    esp_netif_dns_info_t fallback_main = {};
+    fallback_main.ip.type = ESP_IPADDR_TYPE_V4;
+    ip4addr_aton("8.8.8.8", &fallback_main.ip.u_addr.ip4);
+    ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &fallback_main));
 
-        esp_netif_dns_info_t fallback_backup = {};
-        fallback_backup.ip.type = ESP_IPADDR_TYPE_V4;
-        ip4addr_aton("1.1.1.1", &fallback_backup.ip.u_addr.ip4);
-        ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_BACKUP, &fallback_backup));
+    esp_netif_dns_info_t fallback_backup = {};
+    fallback_backup.ip.type = ESP_IPADDR_TYPE_V4;
+    ip4addr_aton("1.1.1.1", &fallback_backup.ip.u_addr.ip4);
+    ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_BACKUP, &fallback_backup));
 
-        ESP_LOGW(TAG, "Main DNS missing; fallback DNS applied (8.8.8.8 / 1.1.1.1)");
-    }
+    esp_netif_set_default_netif(sta_netif);
+    ESP_LOGW(TAG, "DNS forced to public resolvers (8.8.8.8 / 1.1.1.1) and WIFI_STA_DEF set as default netif");
 }
 
 void WiFiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
@@ -95,8 +94,9 @@ void WiFiManager::initialize() {
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_LOGI(TAG, "WiFi power save disabled (WIFI_PS_NONE) for low-latency telemetry");
 
-    // Force ESP32-C5 to use 5GHz band - Must be called after esp_wifi_start()
-    ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_5G_ONLY));
+    // Keep band selection automatic for better roaming and DNS stability on ESP32-C5.
+    ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
+    ESP_LOGI(TAG, "WiFi band mode set to AUTO");
 }
 
 void WiFiManager::waitForConnection(uint32_t timeout_ms) {
