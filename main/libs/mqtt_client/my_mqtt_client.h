@@ -13,11 +13,17 @@ class MQTTClient {
 private:
     static constexpr int MQTT_QOS = 1;
     static constexpr int MQTT_RETAIN = 0;
+    static constexpr int OUTBOX_SOFT_LIMIT_BYTES = 8 * 1024;
+    static constexpr int OUTBOX_HARD_LIMIT_BYTES = 12 * 1024;
 
     struct PublishDiagnostics {
         uint32_t publish_attempts = 0;
         uint32_t publish_success = 0;
         uint32_t publish_fail = 0;
+        uint32_t skipped_disconnected = 0;
+        uint32_t skipped_backpressure = 0;
+        uint32_t json_build_fail = 0;
+        uint32_t enqueue_fail = 0;
         uint32_t consecutive_failures = 0;
         uint32_t published_events = 0;
         int last_result = 0;

@@ -2,9 +2,44 @@
 #include "../config/config.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
+#include "esp_netif.h"
+#include "lwip/ip4_addr.h"
+#include "lwip/ip_addr.h"
 #include <string.h>
 
 static const char *TAG = "WIFI_MANAGER";
+
+static void ensureDnsServers() {
+    esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!sta_netif) {
+        ESP_LOGW(TAG, "Failed to get WIFI_STA_DEF netif for DNS check");
+        return;
+    }
+
+    esp_netif_dns_info_t dns_main = {};
+    esp_netif_dns_info_t dns_backup = {};
+    esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &dns_main);
+    esp_netif_get_dns_info(sta_netif, ESP_NETIF_DNS_BACKUP, &dns_backup);
+
+    ESP_LOGI(TAG,
+             "DNS servers: main=" IPSTR " backup=" IPSTR,
+             IP2STR(&dns_main.ip.u_addr.ip4),
+             IP2STR(&dns_backup.ip.u_addr.ip4));
+
+    if (dns_main.ip.u_addr.ip4.addr == 0) {
+        esp_netif_dns_info_t fallback_main = {};
+        fallback_main.ip.type = ESP_IPADDR_TYPE_V4;
+        ip4addr_aton("8.8.8.8", &fallback_main.ip.u_addr.ip4);
+        ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_MAIN, &fallback_main));
+
+        esp_netif_dns_info_t fallback_backup = {};
+        fallback_backup.ip.type = ESP_IPADDR_TYPE_V4;
+        ip4addr_aton("1.1.1.1", &fallback_backup.ip.u_addr.ip4);
+        ESP_ERROR_CHECK(esp_netif_set_dns_info(sta_netif, ESP_NETIF_DNS_BACKUP, &fallback_backup));
+
+        ESP_LOGW(TAG, "Main DNS missing; fallback DNS applied (8.8.8.8 / 1.1.1.1)");
+    }
+}
 
 void WiFiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     WiFiManager* instance = static_cast<WiFiManager*>(arg);
@@ -17,9 +52,15 @@ void WiFiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t e
         esp_wifi_connect();
         ESP_LOGI(TAG, "Retrying WiFi connection...");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        auto* ip_event = static_cast<ip_event_got_ip_t*>(event_data);
         if (instance->led_indicator) instance->led_indicator->set_wifi_connected();
         xEventGroupSetBits(instance->event_group, instance->CONNECTED_BIT);
-        ESP_LOGI(TAG, "WiFi Connected!");
+        ESP_LOGI(TAG,
+                 "WiFi Connected! ip=" IPSTR " gw=" IPSTR " mask=" IPSTR,
+                 IP2STR(&ip_event->ip_info.ip),
+                 IP2STR(&ip_event->ip_info.gw),
+                 IP2STR(&ip_event->ip_info.netmask));
+        ensureDnsServers();
     }
 }
 

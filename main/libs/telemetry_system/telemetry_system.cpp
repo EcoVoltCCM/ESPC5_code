@@ -356,6 +356,16 @@ void TelemetrySystem::sink_loop() {
                          (long long)high_block_sd_ms);
             }
 
+            if (!mqtt_conn && (telemetry.data.message_id % 10 == 0)) {
+                ESP_LOGW(TAG,
+                         "MQTT offline mode: msg=%d queue=%u/%u outbox=%d wifi=%d -> storing to SD only",
+                         (int)telemetry.data.message_id,
+                         (unsigned)items_waiting,
+                         (unsigned)QUEUE_SIZE,
+                         mqtt_outbox,
+                         wifi_conn ? 1 : 0);
+            }
+
             if (mqtt_dur > (int64_t)TelemetryConfig::PUBLISH_INTERVAL && items_waiting > 0) {
                 ESP_LOGW(TAG,
                          "MQTT block over budget: msg=%d mqtt=%lldms budget=%lums queue=%u/%u res=%d payload=%uB outbox=%d",

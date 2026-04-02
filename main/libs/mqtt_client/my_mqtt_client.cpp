@@ -92,7 +92,7 @@ bool MQTTClient::initialize() {
     mqtt_cfg.session.disable_keepalive = false;
     mqtt_cfg.buffer.size = 2048;
     mqtt_cfg.buffer.out_size = 2048;
-    mqtt_cfg.outbox.limit = 65536;
+    mqtt_cfg.outbox.limit = 16384;
     
     client = esp_mqtt_client_init(&mqtt_cfg);
     if (!client) return false;
@@ -118,13 +118,97 @@ int MQTTClient::outboxSize() const {
 bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t* out_payload_bytes) {
     diagnostics.publish_attempts++;
     bool connected_now = isConnected();
+    int outbox_before = outboxSize();
+
+    if (!connected_now) {
+        diagnostics.publish_fail++;
+        diagnostics.skipped_disconnected++;
+        diagnostics.consecutive_failures++;
+        diagnostics.last_result = -2;
+        diagnostics.last_payload_bytes = 0;
+        diagnostics.last_json_build_ms = 0;
+        diagnostics.last_enqueue_ms = 0;
+        if (out_result) *out_result = -2;
+        if (out_payload_bytes) *out_payload_bytes = 0;
+
+        if ((diagnostics.skipped_disconnected % 25) == 1 || diagnostics.consecutive_failures == 1) {
+            ESP_LOGW(TAG,
+                     "MQTT disconnected, publish skipped: msg=%d outbox=%d fail=%u disc_skip=%u",
+                     telemetry.data.message_id,
+                     outbox_before,
+                     (unsigned)diagnostics.publish_fail,
+                     (unsigned)diagnostics.skipped_disconnected);
+        }
+        return false;
+    }
+
+    if (outbox_before >= OUTBOX_HARD_LIMIT_BYTES) {
+        diagnostics.publish_fail++;
+        diagnostics.skipped_backpressure++;
+        diagnostics.consecutive_failures++;
+        diagnostics.last_result = -4;
+        diagnostics.last_payload_bytes = 0;
+        diagnostics.last_json_build_ms = 0;
+        diagnostics.last_enqueue_ms = 0;
+        if (out_result) *out_result = -4;
+        if (out_payload_bytes) *out_payload_bytes = 0;
+        ESP_LOGW(TAG,
+                 "MQTT outbox hard limit, publish dropped: msg=%d outbox=%d hard=%d backpressure_drop=%u",
+                 telemetry.data.message_id,
+                 outbox_before,
+                 OUTBOX_HARD_LIMIT_BYTES,
+                 (unsigned)diagnostics.skipped_backpressure);
+        return false;
+    }
+
+    if (outbox_before >= OUTBOX_SOFT_LIMIT_BYTES && (telemetry.data.message_id % 2) != 0) {
+        diagnostics.publish_fail++;
+        diagnostics.skipped_backpressure++;
+        diagnostics.consecutive_failures++;
+        diagnostics.last_result = -5;
+        diagnostics.last_payload_bytes = 0;
+        diagnostics.last_json_build_ms = 0;
+        diagnostics.last_enqueue_ms = 0;
+        if (out_result) *out_result = -5;
+        if (out_payload_bytes) *out_payload_bytes = 0;
+
+        if ((diagnostics.skipped_backpressure % 20) == 1) {
+            ESP_LOGW(TAG,
+                     "MQTT outbox soft limit, throttling publishes: msg=%d outbox=%d soft=%d skip=%u",
+                     telemetry.data.message_id,
+                     outbox_before,
+                     OUTBOX_SOFT_LIMIT_BYTES,
+                     (unsigned)diagnostics.skipped_backpressure);
+        }
+        return false;
+    }
 
     int64_t json_start_us = esp_timer_get_time();
     auto json = telemetry.toJSON();
+    if (!json) {
+        diagnostics.publish_fail++;
+        diagnostics.json_build_fail++;
+        diagnostics.consecutive_failures++;
+        diagnostics.last_result = -6;
+        diagnostics.last_payload_bytes = 0;
+        diagnostics.last_json_build_ms = (esp_timer_get_time() - json_start_us) / 1000;
+        diagnostics.last_enqueue_ms = 0;
+        if (out_result) *out_result = -6;
+        if (out_payload_bytes) *out_payload_bytes = 0;
+        ESP_LOGE(TAG,
+                 "JSON root allocation failed: msg=%d json=%lldms fail=%u json_fail=%u",
+                 telemetry.data.message_id,
+                 (long long)diagnostics.last_json_build_ms,
+                 (unsigned)diagnostics.publish_fail,
+                 (unsigned)diagnostics.json_build_fail);
+        return false;
+    }
+
     int64_t json_ready_us = esp_timer_get_time();
     char* json_string = cJSON_PrintUnformatted(json.get());
     if (!json_string) {
         diagnostics.publish_fail++;
+        diagnostics.json_build_fail++;
         diagnostics.consecutive_failures++;
         diagnostics.last_result = -3;
         diagnostics.last_payload_bytes = 0;
@@ -171,36 +255,36 @@ bool MQTTClient::publish(const TelemetryData& telemetry, int* out_result, size_t
         diagnostics.publish_success++;
         diagnostics.consecutive_failures = 0;
 
-        if ((diagnostics.publish_success % 50) == 0 || diagnostics.last_enqueue_ms > 50 || !connected_now) {
+        if ((diagnostics.publish_success % 50) == 0 || diagnostics.last_enqueue_ms > 50) {
             int outbox = esp_mqtt_client_get_outbox_size(client);
             ESP_LOGI(TAG,
-                     "Publish ok: msg=%d mqtt_msg_id=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d connected=%d ok=%u fail=%u",
+                     "Publish ok: msg=%d mqtt_msg_id=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d ok=%u fail=%u",
                      telemetry.data.message_id,
                      msg_id,
                      (unsigned)payload_bytes,
                      (long long)diagnostics.last_json_build_ms,
                      (long long)diagnostics.last_enqueue_ms,
                      outbox,
-                     connected_now ? 1 : 0,
                      (unsigned)diagnostics.publish_success,
                      (unsigned)diagnostics.publish_fail);
         }
     } else {
         diagnostics.publish_fail++;
+        diagnostics.enqueue_fail++;
         diagnostics.consecutive_failures++;
         int outbox = esp_mqtt_client_get_outbox_size(client);
         ESP_LOGE(TAG,
-                 "MQTT enqueue failed: msg=%d result=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d connected=%d attempts=%u ok=%u fail=%u streak=%u topic=%s",
+                 "MQTT enqueue failed: msg=%d result=%d payload=%uB json=%lldms enqueue=%lldms outbox=%d attempts=%u ok=%u fail=%u enqueue_fail=%u streak=%u topic=%s",
                  telemetry.data.message_id,
                  msg_id,
                  (unsigned)payload_bytes,
                  (long long)diagnostics.last_json_build_ms,
                  (long long)diagnostics.last_enqueue_ms,
                  outbox,
-                 connected_now ? 1 : 0,
                  (unsigned)diagnostics.publish_attempts,
                  (unsigned)diagnostics.publish_success,
                  (unsigned)diagnostics.publish_fail,
+                 (unsigned)diagnostics.enqueue_fail,
                  (unsigned)diagnostics.consecutive_failures,
                  TelemetryConfig::ABLY_CHANNEL);
     }
