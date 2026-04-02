@@ -206,11 +206,12 @@ void TelemetrySystem::sink_loop() {
 
     while (true) {
         if (xQueueReceive(telemetry_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
+            int64_t start_time = esp_timer_get_time();
             bool wifi_conn = wifi_manager.isConnected();
             UBaseType_t items_waiting = uxQueueMessagesWaiting(telemetry_queue);
             
-            // 1. MQTT Publish (Restored to 5Hz - Every record)
-            // Skip only if queue is critically full (> 80%) to ensure SD safety
+            // 1. MQTT Publish
+            int64_t mqtt_start = esp_timer_get_time();
             if (items_waiting < (QUEUE_SIZE * 0.8)) {
                 if (mqtt_client.publish(telemetry)) {
                     led_indicator.flash_success(wifi_conn);
@@ -221,16 +222,28 @@ void TelemetrySystem::sink_loop() {
                     led_indicator.flash_error(wifi_conn);
                 }
             } else if (telemetry.data.message_id % 10 == 0) {
-                ESP_LOGW(TAG, "Critical Congestion! Queue=%d, skipping MQTT to save SD data.", (int)items_waiting);
+                ESP_LOGW(TAG, "Critical Congestion! Queue=%d, skipping MQTT. App uptime: %lld ms", 
+                         (int)items_waiting, (long long)(esp_timer_get_time() / 1000));
             }
+            int64_t mqtt_end = esp_timer_get_time();
 
-            // 2. SD Card Write (ALWAYS write to SD, 5Hz)
+            // 2. SD Card Write
+            int64_t sd_start = esp_timer_get_time();
             if (sd_card.isReady()) {
-                if (sd_card.write_telemetry(telemetry, records_since_flush) == ESP_OK) {
-                    // led_indicator.flash_sd_write();
-                } else {
+                if (sd_card.write_telemetry(telemetry, records_since_flush) != ESP_OK) {
                     ESP_LOGE(TAG, "SD Card write failed");
                 }
+            }
+            int64_t sd_end = esp_timer_get_time();
+
+            // Performance logging
+            int64_t mqtt_dur = (mqtt_end - mqtt_start) / 1000;
+            int64_t sd_dur = (sd_end - sd_start) / 1000;
+            int64_t total_dur = (esp_timer_get_time() - start_time) / 1000;
+
+            if (total_dur > 50 || (int)items_waiting > (QUEUE_SIZE * 0.5)) {
+                ESP_LOGI(TAG, "Sink Perf: Total=%lldms (MQTT=%lldms, SD=%lldms) Queue=%d", 
+                         total_dur, mqtt_dur, sd_dur, (int)items_waiting);
             }
         }
     }
