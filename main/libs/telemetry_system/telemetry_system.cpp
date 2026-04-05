@@ -47,6 +47,14 @@ void TelemetrySystem::sink_task_entry(void* arg) {
 
 void TelemetrySystem::run() {
     // 1. Initialize Hardware (I2C, LED, WiFi)
+    // Force reset I2C pins and disable JTAG to unlock GPIO 4/5
+    gpio_reset_pin(HardwareConfig::I2C_MASTER_SCL_IO);
+    gpio_reset_pin(HardwareConfig::I2C_MASTER_SDA_IO);
+    
+    // Explicitly route these pins to the GPIO matrix (unlinks them from JTAG)
+    esp_rom_gpio_pad_select_gpio(HardwareConfig::I2C_MASTER_SCL_IO);
+    esp_rom_gpio_pad_select_gpio(HardwareConfig::I2C_MASTER_SDA_IO);
+
     i2c_master_bus_config_t i2c_mst_config = {};
     i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
     i2c_mst_config.i2c_port = I2C_NUM_0;
@@ -216,6 +224,14 @@ void TelemetrySystem::sink_loop() {
                     led_indicator.flash_success(wifi_conn);
                     if (telemetry.data.message_id % 50 == 0) {
                         ESP_LOGI(TAG, "Sent #%d over MQTT (5Hz)", (int)telemetry.data.message_id);
+                        ESP_LOGI(TAG, "IMU1: Ax=%.2f, Ay=%.2f, Az=%.2f | Gz=%.2f", 
+                                 telemetry.data.accel_x, telemetry.data.accel_y, telemetry.data.accel_z, 
+                                 telemetry.data.gyro_z);
+                        ESP_LOGI(TAG, "IMU2: Ax=%.2f, Ay=%.2f, Az=%.2f | Gz=%.2f", 
+                                 telemetry.data.steering_accel_x, telemetry.data.steering_accel_y, telemetry.data.steering_accel_z, 
+                                 telemetry.data.steering_gyro_z);
+                        ESP_LOGI(TAG, "Throttle: %.1f%% | Speed: %.1f km/h", 
+                                 telemetry.data.throttle_pct, telemetry.data.speed_ms * 3.6f);
                     }
                 } else {
                     led_indicator.flash_error(wifi_conn);

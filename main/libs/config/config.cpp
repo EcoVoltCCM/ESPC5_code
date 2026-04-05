@@ -18,8 +18,8 @@ namespace HardwareConfig {
     const uint8_t MPU6050_ADDR = 0x69;
     const uint8_t MPU6050_STEERING_ADDR = 0x68;
     const uint8_t ADS1115_ADDR = 0x48;
-    const gpio_num_t I2C_MASTER_SCL_IO = GPIO_NUM_5; // Changed from 26
-    const gpio_num_t I2C_MASTER_SDA_IO = GPIO_NUM_4; // Changed from 25
+    const gpio_num_t I2C_MASTER_SCL_IO = GPIO_NUM_5;
+    const gpio_num_t I2C_MASTER_SDA_IO = GPIO_NUM_4;
     const uint32_t I2C_MASTER_FREQ_HZ = 50000;
     
     const uart_port_t GPS_UART_NUM = UART_NUM_1;
@@ -28,7 +28,7 @@ namespace HardwareConfig {
     const gpio_num_t GPS_UART_TX_PIN = GPIO_NUM_23;
 
     const gpio_num_t HALL_SENSOR_PIN = GPIO_NUM_7;
-    const float WHEEL_CIRCUMFERENCE_M = 0.9576f; // 12 inch diameter wheel
+    const float WHEEL_CIRCUMFERENCE_M = 1.5959f; // 20 inch diameter wheel
 
     const gpio_num_t RGB_LED_PIN = GPIO_NUM_27;
 
