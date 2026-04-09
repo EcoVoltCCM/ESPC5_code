@@ -30,15 +30,19 @@ private:
     int64_t last_tick_time = 0;
     
     // Task synchronization
-    QueueHandle_t telemetry_queue = nullptr;
+    QueueHandle_t mqtt_queue = nullptr;
+    QueueHandle_t sd_queue = nullptr;
     static constexpr size_t QUEUE_SIZE = 100;
     
 public:
     TelemetrySystem();
     void run(); // Orchestrator
     static void sensor_task_entry(void* arg);
-    static void sink_task_entry(void* arg);
+    static void mqtt_task_entry(void* arg);
+    static void sd_task_entry(void* arg);
     
     void sensor_loop();
-    void sink_loop();
+    void mqtt_loop();
+    void sd_loop();
+    void log_to_sd(const char* text);
 };

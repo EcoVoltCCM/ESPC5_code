@@ -31,8 +31,29 @@ void getISOTimestamp(char* dest, size_t max_len) {
     snprintf(dest, max_len, "%s.%03ldZ", buf, tv.tv_usec / 1000);
 }
 
+// Global pointer for log redirection
+static TelemetrySystem* g_system_ptr = nullptr;
+static vprintf_like_t g_previous_vprintf = nullptr;
+
+int sd_log_vprintf(const char *fmt, va_list l) {
+    if (g_system_ptr) {
+        char buf[256];
+        int len = vsnprintf(buf, sizeof(buf), fmt, l);
+        if (len > 0) {
+            g_system_ptr->log_to_sd(buf);
+        }
+    }
+    return g_previous_vprintf(fmt, l);
+}
+
+void TelemetrySystem::log_to_sd(const char* text) {
+    sd_card.write_log(text);
+}
+
 TelemetrySystem::TelemetrySystem() {
-    telemetry_queue = xQueueCreate(QUEUE_SIZE, sizeof(TelemetryData));
+    mqtt_queue = xQueueCreate(QUEUE_SIZE, sizeof(TelemetryData));
+    sd_queue = xQueueCreate(QUEUE_SIZE, sizeof(TelemetryData));
+    g_system_ptr = this;
 }
 
 void TelemetrySystem::sensor_task_entry(void* arg) {
@@ -40,8 +61,13 @@ void TelemetrySystem::sensor_task_entry(void* arg) {
     vTaskDelete(NULL);
 }
 
-void TelemetrySystem::sink_task_entry(void* arg) {
-    static_cast<TelemetrySystem*>(arg)->sink_loop();
+void TelemetrySystem::mqtt_task_entry(void* arg) {
+    static_cast<TelemetrySystem*>(arg)->mqtt_loop();
+    vTaskDelete(NULL);
+}
+
+void TelemetrySystem::sd_task_entry(void* arg) {
+    static_cast<TelemetrySystem*>(arg)->sd_loop();
     vTaskDelete(NULL);
 }
 
@@ -84,16 +110,18 @@ void TelemetrySystem::run() {
         ESP_LOGI(TAG, "WiFi Connected. Initializing SNTP.");
         initialize_sntp();
     } else {
-        ESP_LOGW(TAG, "WiFi not connected after 10s. Proceeding with SD initialization to avoid data loss.");
+        ESP_LOGW(TAG, "WiFi not connected after 10s. Proceeding with SD initialization.");
     }
 
     hall_sensor.initialize(HardwareConfig::HALL_SENSOR_PIN, HardwareConfig::WHEEL_CIRCUMFERENCE_M);
     
     // 3. Initialize SD Card
     if (sd_card.initialize() == ESP_OK) {
-        ESP_LOGI(TAG, "SD Card detected, blue LED ON for 5 seconds.");
+        ESP_LOGI(TAG, "SD Card detected, starting log redirection.");
+        g_previous_vprintf = esp_log_set_vprintf(sd_log_vprintf);
+        
         led_indicator.set_sd_detected();
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(2000));
         // Reset to wifi status
         if (wifi_manager.isConnected()) led_indicator.set_wifi_connected();
         else led_indicator.set_wifi_disconnected();
@@ -108,14 +136,17 @@ void TelemetrySystem::run() {
     start_time_us = esp_timer_get_time();
 
     // 5. Launch Tasks
-    // Sensor Task (High Priority: 10)
-    xTaskCreate(sensor_task_entry, "sensor_task", 8192, this, 10, NULL);
+    // Sensor Task (High Priority: 10, Core 0)
+    xTaskCreatePinnedToCore(sensor_task_entry, "sensor_task", 8192, this, 10, NULL, 0);
     
-    // Sink Task (Medium Priority: 5)
-    xTaskCreate(sink_task_entry, "sink_task", 8192, this, 5, NULL);
+    // SD Task (High Priority: 8, Core 1 - ensures data safety)
+    xTaskCreatePinnedToCore(sd_task_entry, "sd_task", 8192, this, 8, NULL, 1);
+    
+    // MQTT Task (Medium Priority: 5, Core 1)
+    xTaskCreatePinnedToCore(mqtt_task_entry, "mqtt_task", 8192, this, 5, NULL, 1);
 
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Just keep the orchestrator alive
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
@@ -128,7 +159,7 @@ void TelemetrySystem::sensor_loop() {
 
         TelemetryData telemetry;
         
-        // Read Internal ADC (Voltage/Current) - 200 samples, energy integration, and peak tracking
+        // Read Internal ADC (Voltage/Current)
         float avg_voltage, avg_current, max_current, max_power, avg_power;
         adc_reader.read_processed_data(avg_voltage, avg_current, max_current, max_power, avg_power, cumulative_energy);
         
@@ -201,52 +232,33 @@ void TelemetrySystem::sensor_loop() {
         telemetry.data.energy_j = cumulative_energy;
         telemetry.data.distance_m = cumulative_distance;
 
-        // Send to sink task
-        if (xQueueSend(telemetry_queue, &telemetry, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "Telemetry queue full, dropping record!");
+        // Send to queues
+        xQueueSend(mqtt_queue, &telemetry, 0);
+        xQueueSend(sd_queue, &telemetry, 0);
+    }
+}
+
+void TelemetrySystem::mqtt_loop() {
+    TelemetryData telemetry;
+    while (true) {
+        if (xQueueReceive(mqtt_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
+            bool wifi_conn = wifi_manager.isConnected();
+            if (mqtt_client.publish(telemetry)) {
+                led_indicator.flash_success(wifi_conn);
+            } else {
+                led_indicator.flash_error(wifi_conn);
+            }
         }
     }
 }
 
-void TelemetrySystem::sink_loop() {
+void TelemetrySystem::sd_loop() {
     TelemetryData telemetry;
     int records_since_flush = 0;
-
     while (true) {
-        if (xQueueReceive(telemetry_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
-            bool wifi_conn = wifi_manager.isConnected();
-            UBaseType_t items_waiting = uxQueueMessagesWaiting(telemetry_queue);
-            
-            // 1. MQTT Publish (Restored to 5Hz - Every record)
-            // Skip only if queue is critically full (> 80%) to ensure SD safety
-            if (items_waiting < (QUEUE_SIZE * 0.8)) {
-                if (mqtt_client.publish(telemetry)) {
-                    led_indicator.flash_success(wifi_conn);
-                    if (telemetry.data.message_id % 50 == 0) {
-                        ESP_LOGI(TAG, "Sent #%d over MQTT (5Hz)", (int)telemetry.data.message_id);
-                        ESP_LOGI(TAG, "IMU1: Ax=%.2f, Ay=%.2f, Az=%.2f | Gz=%.2f", 
-                                 telemetry.data.accel_x, telemetry.data.accel_y, telemetry.data.accel_z, 
-                                 telemetry.data.gyro_z);
-                        ESP_LOGI(TAG, "IMU2: Ax=%.2f, Ay=%.2f, Az=%.2f | Gz=%.2f", 
-                                 telemetry.data.steering_accel_x, telemetry.data.steering_accel_y, telemetry.data.steering_accel_z, 
-                                 telemetry.data.steering_gyro_z);
-                        ESP_LOGI(TAG, "Throttle: %.1f%% | Speed: %.1f km/h", 
-                                 telemetry.data.throttle_pct, telemetry.data.speed_ms * 3.6f);
-                    }
-                } else {
-                    led_indicator.flash_error(wifi_conn);
-                }
-            } else if (telemetry.data.message_id % 10 == 0) {
-                ESP_LOGW(TAG, "Critical Congestion! Queue=%d, skipping MQTT to save SD data.", (int)items_waiting);
-            }
-
-            // 2. SD Card Write (ALWAYS write to SD, 5Hz)
+        if (xQueueReceive(sd_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
             if (sd_card.isReady()) {
-                if (sd_card.write_telemetry(telemetry, records_since_flush) == ESP_OK) {
-                    // led_indicator.flash_sd_write();
-                } else {
-                    ESP_LOGE(TAG, "SD Card write failed");
-                }
+                sd_card.write_telemetry(telemetry, records_since_flush);
             }
         }
     }

@@ -27,7 +27,7 @@ extern "C" void app_main(void) {
     
     ESP_LOGI(TAG, "ESP32 Combined Telemetry System Starting...");
     
-    xTaskCreate(GPS::gps_read_task, "gps_read_task", 4096, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(GPS::gps_read_task, "gps_read_task", 4096, NULL, 5, NULL, 0);
     ESP_LOGI(TAG, "GPS reader task started.");
     
     static TelemetrySystem telemetry_system;

@@ -20,7 +20,7 @@ namespace HardwareConfig {
     const uint8_t ADS1115_ADDR = 0x48;
     const gpio_num_t I2C_MASTER_SCL_IO = GPIO_NUM_5;
     const gpio_num_t I2C_MASTER_SDA_IO = GPIO_NUM_4;
-    const uint32_t I2C_MASTER_FREQ_HZ = 50000;
+    const uint32_t I2C_MASTER_FREQ_HZ = 400000;
     
     const uart_port_t GPS_UART_NUM = UART_NUM_1;
     const int GPS_UART_BAUD_RATE = 9600;
