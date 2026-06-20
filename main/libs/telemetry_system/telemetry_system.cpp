@@ -47,34 +47,53 @@ void TelemetrySystem::sink_task_entry(void* arg) {
 
 void TelemetrySystem::run() {
     // 1. Initialize Hardware (I2C, LED, WiFi)
-    // Force reset I2C pins and disable JTAG to unlock GPIO 4/5
-    gpio_reset_pin(HardwareConfig::I2C_MASTER_SCL_IO);
-    gpio_reset_pin(HardwareConfig::I2C_MASTER_SDA_IO);
+    static bool i2c_initialized = false;
     
-    // Explicitly route these pins to the GPIO matrix (unlinks them from JTAG)
-    esp_rom_gpio_pad_select_gpio(HardwareConfig::I2C_MASTER_SCL_IO);
-    esp_rom_gpio_pad_select_gpio(HardwareConfig::I2C_MASTER_SDA_IO);
+    if (!i2c_initialized) {
+        ESP_LOGI(TAG, "Unlocking I2C pins from JTAG (GPIO 4, 5)...");
+        
+        // Force these pins to be GPIOs (disconnects Pad JTAG)
+        esp_rom_gpio_pad_select_gpio(HardwareConfig::I2C_MASTER_SCL_IO);
+        esp_rom_gpio_pad_select_gpio(HardwareConfig::I2C_MASTER_SDA_IO);
+        
+        gpio_reset_pin(HardwareConfig::I2C_MASTER_SCL_IO);
+        gpio_reset_pin(HardwareConfig::I2C_MASTER_SDA_IO);
 
-    i2c_master_bus_config_t i2c_mst_config = {};
-    i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
-    i2c_mst_config.i2c_port = I2C_NUM_0;
-    i2c_mst_config.scl_io_num = HardwareConfig::I2C_MASTER_SCL_IO;
-    i2c_mst_config.sda_io_num = HardwareConfig::I2C_MASTER_SDA_IO;
-    i2c_mst_config.glitch_ignore_cnt = 7;
-    i2c_mst_config.flags.enable_internal_pullup = true;
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
+        i2c_master_bus_config_t i2c_mst_config = {};
+        i2c_mst_config.clk_source = I2C_CLK_SRC_DEFAULT;
+        i2c_mst_config.i2c_port = I2C_NUM_0;
+        i2c_mst_config.scl_io_num = HardwareConfig::I2C_MASTER_SCL_IO;
+        i2c_mst_config.sda_io_num = HardwareConfig::I2C_MASTER_SDA_IO;
+        i2c_mst_config.glitch_ignore_cnt = 7;
+        i2c_mst_config.flags.enable_internal_pullup = true;
+        
+        esp_err_t i2c_err = i2c_new_master_bus(&i2c_mst_config, &i2c_bus);
+        if (i2c_err == ESP_OK) {
+            i2c_initialized = true;
+            ESP_LOGI(TAG, "I2C Bus initialized successfully.");
+        } else {
+            ESP_LOGE(TAG, "I2C Bus Init Failed: %s", esp_err_to_name(i2c_err));
+        }
+    }
 
     led_indicator.initialize(HardwareConfig::RGB_LED_PIN);
     wifi_manager.set_led_indicator(&led_indicator);
     wifi_manager.initialize();
     
-    // 2. Initialize Sensors
-    vTaskDelay(pdMS_TO_TICKS(100));
-    mpu.initialize(i2c_bus, HardwareConfig::MPU6050_ADDR);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    steering_mpu.initialize(i2c_bus, HardwareConfig::MPU6050_STEERING_ADDR);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    external_adc.initialize(i2c_bus, HardwareConfig::ADS1115_ADDR);
+    // Initialize Internal ADC after I2C/WiFi to avoid pin contention during boot
+    adc_reader.initialize();
+    
+    // 2. Initialize Sensors (Only if bus is valid)
+    if (i2c_initialized) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        mpu.initialize(i2c_bus, HardwareConfig::MPU6050_ADDR);
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+        steering_mpu.initialize(i2c_bus, HardwareConfig::MPU6050_STEERING_ADDR);
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+        external_adc.initialize(i2c_bus, HardwareConfig::ADS1115_ADDR);
+    }
 
     // 2.5 Wait for WiFi with a 10s timeout before forcing SD start
     ESP_LOGI(TAG, "Waiting for WiFi (10s timeout)...");
@@ -132,8 +151,8 @@ void TelemetrySystem::sensor_loop() {
         float avg_voltage, avg_current, max_current, max_power, avg_power;
         adc_reader.read_processed_data(avg_voltage, avg_current, max_current, max_power, avg_power, cumulative_energy);
         
-        // Read Hall Sensor
-        float speed_kmh = hall_sensor.read_speed_kmh();
+        // Read GPS Speed
+        float speed_kmh = g_sensor_data.gps_data.speed_kmh;
         float speed_ms = speed_kmh / 3.6f;
         
         float time_delta_s = TelemetryConfig::PUBLISH_INTERVAL / 1000.0f;

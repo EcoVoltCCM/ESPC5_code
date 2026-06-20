@@ -5,6 +5,7 @@
 #include "../config/config.h"
 #include "driver/gpio.h"
 #include <algorithm>
+#include <cmath>
 
 static const char *TAG = "ADC_READER";
 
@@ -21,8 +22,11 @@ static const char *TAG = "ADC_READER";
 ADCReader::ADCReader() 
     : voltage_channel(HardwareConfig::VOLTAGE_ADC_CHANNEL),
       current_channel(HardwareConfig::CURRENT_ADC_CHANNEL) {
-    configure_adc();
     data_mutex = xSemaphoreCreateMutex();
+}
+
+void ADCReader::initialize() {
+    configure_adc();
 }
 
 ADCReader::~ADCReader() {
@@ -127,6 +131,7 @@ void ADCReader::read_processed_data(float& avg_voltage, float& avg_current, floa
         } else {
             // Apply zero calibration offset
             inst_current -= zero_offset_a;
+            inst_current = std::abs(inst_current);
         }
 
         current_sum += inst_current;
