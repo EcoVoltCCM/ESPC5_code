@@ -90,7 +90,7 @@ esp_err_t SDCard::initialize() {
         ESP_LOGE(TAG, "Failed to open file %s for writing header", file_path);
         return ESP_FAIL;
     }
-    fprintf(f, "timestamp,msg_id,uptime,speed_ms,voltage,current,max_current,avg_power,energy,distance,lat,lon,alt,"
+    fprintf(f, "timestamp,msg_id,uptime,speed_ms,hall_speed_ms,voltage,current,max_current,avg_power,energy,distance,lat,lon,alt,"
                "accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,"
                "s_accel_x,s_accel_y,s_accel_z,s_gyro_x,s_gyro_y,s_gyro_z,"
                "heading,total_accel,throttle_pct,brake_pct,brake2_pct,"

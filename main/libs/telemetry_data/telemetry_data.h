@@ -8,6 +8,7 @@ class TelemetryData {
 public:
     struct SensorData {
         float speed_ms = 0.0f;
+        float hall_speed_ms = 0.0f;
         float voltage_v = 0.0f;
         float current_a = 0.0f;
         float max_current_a = 0.0f;

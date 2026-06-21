@@ -7,6 +7,7 @@ std::unique_ptr<cJSON, decltype(&cJSON_Delete)> TelemetryData::toJSON() const {
     
     cJSON_AddStringToObject(json.get(), "timestamp", data.timestamp);
     cJSON_AddNumberToObject(json.get(), "speed_ms", std::round(data.speed_ms * 100) / 100);
+    cJSON_AddNumberToObject(json.get(), "hall_speed_ms", std::round(data.hall_speed_ms * 100) / 100);
     cJSON_AddNumberToObject(json.get(), "voltage_v", std::round(data.voltage_v * 100) / 100);
     cJSON_AddNumberToObject(json.get(), "current_a", std::round(data.current_a * 100) / 100);
     cJSON_AddNumberToObject(json.get(), "max_current_a", std::round(data.max_current_a * 100) / 100);
@@ -44,11 +45,11 @@ std::unique_ptr<cJSON, decltype(&cJSON_Delete)> TelemetryData::toJSON() const {
 std::string TelemetryData::toCSV() const {
     char row[400];
     snprintf(row, sizeof(row), 
-            "%s,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,"
+            "%s,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,"
             "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,"
             "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,"
             "%.2f,%.2f,%.1f,%.1f,%.1f,%.3f,%.3f\n",
-            data.timestamp, data.message_id, data.uptime_seconds, data.speed_ms, data.voltage_v, data.current_a, data.max_current_a, data.avg_power_w, data.energy_j, data.distance_m,
+            data.timestamp, data.message_id, data.uptime_seconds, data.speed_ms, data.hall_speed_ms, data.voltage_v, data.current_a, data.max_current_a, data.avg_power_w, data.energy_j, data.distance_m,
             data.latitude, data.longitude, data.altitude,
             data.accel_x, data.accel_y, data.accel_z, data.gyro_x, data.gyro_y, data.gyro_z,
             data.steering_accel_x, data.steering_accel_y, data.steering_accel_z, data.steering_gyro_x, data.steering_gyro_y, data.steering_gyro_z,

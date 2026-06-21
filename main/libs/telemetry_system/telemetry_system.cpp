@@ -155,6 +155,10 @@ void TelemetrySystem::sensor_loop() {
         float speed_kmh = g_sensor_data.gps_data.speed_kmh;
         float speed_ms = speed_kmh / 3.6f;
         
+        // Read Hall Sensor
+        float hall_speed_kmh = hall_sensor.read_speed_kmh();
+        float hall_speed_ms = hall_speed_kmh / 3.6f;
+        
         float time_delta_s = TelemetryConfig::PUBLISH_INTERVAL / 1000.0f;
         cumulative_distance += speed_ms * time_delta_s;
 
@@ -194,6 +198,7 @@ void TelemetrySystem::sensor_loop() {
         telemetry.data.message_id = message_count;
         telemetry.data.uptime_seconds = (esp_timer_get_time() - start_time_us) / 1000000.0f;
         telemetry.data.speed_ms = speed_ms;
+        telemetry.data.hall_speed_ms = hall_speed_ms;
         telemetry.data.latitude = g_sensor_data.gps_data.latitude;
         telemetry.data.longitude = g_sensor_data.gps_data.longitude;
         telemetry.data.altitude = g_sensor_data.gps_data.altitude;
