@@ -6,7 +6,7 @@ namespace TelemetryConfig {
     const char* ABLY_API_KEY = "ja_fwQ.K6CTEw:F-aWFMdJXPCv9MvxhYztCGna3XdRJZVgA0qm9pMfDOQ";
     const char* ABLY_CLIENT_ID_PREFIX = "esp32_telemetry_";
     const char* ABLY_CHANNEL = "EcoTele";
-    const uint32_t PUBLISH_INTERVAL = 200; // Publish every 0.2 seconds
+    const uint32_t PUBLISH_INTERVAL = 100; // Loop interval is now 0.1 seconds
     
     const char* MQTT_BROKER_HOST = "mqtt.ably.io";
     const int MQTT_BROKER_PORT = 8883; // SSL port

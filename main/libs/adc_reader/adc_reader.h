@@ -11,6 +11,7 @@ class ADCReader {
 public:
     ADCReader();
     ~ADCReader();
+    void initialize();
 
     /**
      * @brief Reads 200 samples of V and I.

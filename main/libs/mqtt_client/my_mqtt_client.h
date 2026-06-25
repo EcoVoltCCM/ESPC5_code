@@ -6,6 +6,7 @@
 #include "esp_crt_bundle.h"
 #include "../telemetry_data/telemetry_data.h"
 #include "mqtt_client.h" // Use the public header for the MQTT component
+#include <vector>
 
 class MQTTClient {
 private:
@@ -23,4 +24,5 @@ public:
     bool initialize();
     bool waitForConnection(uint32_t timeout_ms = 30000);
     bool publish(const TelemetryData& telemetry);
+    bool publishBatch(const std::vector<TelemetryData>& batch);
 };

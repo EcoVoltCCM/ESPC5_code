@@ -11,6 +11,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <vector>
 
 static const char *TAG = "TELEMETRY_SYSTEM";
 
@@ -235,42 +236,41 @@ void TelemetrySystem::sensor_loop() {
 void TelemetrySystem::sink_loop() {
     TelemetryData telemetry;
     int records_since_flush = 0;
+    std::vector<TelemetryData> mqtt_batch;
+    mqtt_batch.reserve(5);
 
     while (true) {
         if (xQueueReceive(telemetry_queue, &telemetry, portMAX_DELAY) == pdTRUE) {
             bool wifi_conn = wifi_manager.isConnected();
             UBaseType_t items_waiting = uxQueueMessagesWaiting(telemetry_queue);
             
-            // 1. MQTT Publish (Restored to 5Hz - Every record)
-            // Skip only if queue is critically full (> 80%) to ensure SD safety
-            if (items_waiting < (QUEUE_SIZE * 0.8)) {
-                if (mqtt_client.publish(telemetry)) {
-                    led_indicator.flash_success(wifi_conn);
-                    if (telemetry.data.message_id % 50 == 0) {
-                        ESP_LOGI(TAG, "Sent #%d over MQTT (5Hz)", (int)telemetry.data.message_id);
-                        ESP_LOGI(TAG, "IMU1: Ax=%.2f, Ay=%.2f, Az=%.2f | Gz=%.2f", 
-                                 telemetry.data.accel_x, telemetry.data.accel_y, telemetry.data.accel_z, 
-                                 telemetry.data.gyro_z);
-                        ESP_LOGI(TAG, "IMU2: Ax=%.2f, Ay=%.2f, Az=%.2f | Gz=%.2f", 
-                                 telemetry.data.steering_accel_x, telemetry.data.steering_accel_y, telemetry.data.steering_accel_z, 
-                                 telemetry.data.steering_gyro_z);
-                        ESP_LOGI(TAG, "Throttle: %.1f%% | Speed: %.1f km/h", 
-                                 telemetry.data.throttle_pct, telemetry.data.speed_ms * 3.6f);
-                    }
-                } else {
-                    led_indicator.flash_error(wifi_conn);
-                }
-            } else if (telemetry.data.message_id % 10 == 0) {
-                ESP_LOGW(TAG, "Critical Congestion! Queue=%d, skipping MQTT to save SD data.", (int)items_waiting);
-            }
-
-            // 2. SD Card Write (ALWAYS write to SD, 5Hz)
+            // 1. SD Card Write (ALWAYS write to SD, 10Hz)
             if (sd_card.isReady()) {
                 if (sd_card.write_telemetry(telemetry, records_since_flush) == ESP_OK) {
                     // led_indicator.flash_sd_write();
                 } else {
                     ESP_LOGE(TAG, "SD Card write failed");
                 }
+            }
+
+            // 2. MQTT Publish (Batched to 5 records / 0.5s)
+            mqtt_batch.push_back(telemetry);
+            
+            if (mqtt_batch.size() >= 5) {
+                // Skip only if queue is critically full (> 80%) to ensure SD safety
+                if (items_waiting < (QUEUE_SIZE * 0.8)) {
+                    if (mqtt_client.publishBatch(mqtt_batch)) {
+                        led_indicator.flash_success(wifi_conn);
+                        if (mqtt_batch.back().data.message_id % 50 == 0) {
+                            ESP_LOGI(TAG, "Sent batched #%d over MQTT", (int)mqtt_batch.back().data.message_id);
+                        }
+                    } else {
+                        led_indicator.flash_error(wifi_conn);
+                    }
+                } else if (mqtt_batch.back().data.message_id % 10 == 0) {
+                    ESP_LOGW(TAG, "Critical Congestion! Queue=%d, skipping MQTT to save SD data.", (int)items_waiting);
+                }
+                mqtt_batch.clear();
             }
         }
     }

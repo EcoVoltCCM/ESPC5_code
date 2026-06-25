@@ -84,3 +84,25 @@ bool MQTTClient::publish(const TelemetryData& telemetry) {
     free(json_string);
     return msg_id >= 0;
 }
+
+bool MQTTClient::publishBatch(const std::vector<TelemetryData>& batch) {
+    if (!(xEventGroupGetBits(event_group) & CONNECTED_BIT)) {
+        ESP_LOGW(TAG, "MQTT not connected, skipping publish");
+        return false;
+    }
+    
+    if (batch.empty()) return true;
+
+    auto json_array = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>(cJSON_CreateArray(), cJSON_Delete);
+    
+    for (const auto& telemetry : batch) {
+        cJSON_AddItemToArray(json_array.get(), telemetry.toJSON().release());
+    }
+    
+    char* json_string = cJSON_PrintUnformatted(json_array.get());
+    if (!json_string) return false;
+    
+    int msg_id = esp_mqtt_client_publish(client, TelemetryConfig::ABLY_CHANNEL, json_string, 0, 0, 0);
+    free(json_string);
+    return msg_id >= 0;
+}

@@ -17,7 +17,7 @@ static const char *TAG = "ADC_READER";
 #define SHUNT_RESISTOR 0.005f // Ohms
 #define GAIN    20.0f
 #define VREF_V  1.65f
-#define NUM_SAMPLES 200
+#define NUM_SAMPLES 100
 
 ADCReader::ADCReader() 
     : voltage_channel(HardwareConfig::VOLTAGE_ADC_CHANNEL),
@@ -102,7 +102,7 @@ void ADCReader::read_processed_data(float& avg_voltage, float& avg_current, floa
     max_current = -1000.0f;
     max_power = -1000.0f;
     
-    const float dt_per_sample = 0.2f / NUM_SAMPLES; // 0.001s per sample
+    const float dt_per_sample = 0.1f / NUM_SAMPLES; // 0.001s per sample
     float last_inst_voltage = 0;
 
     for (int i = 0; i < NUM_SAMPLES; i++) {
