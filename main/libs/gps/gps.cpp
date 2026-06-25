@@ -110,6 +110,7 @@ namespace GPS {
         }
 
         if (g_sensor_data.gps_data.fix_valid) {
+            ESP_LOGI(TAG, "GPGGA Fix Valid (Quality: %s).", fix_quality);
             if (lat_val && lat_dir && *lat_dir != '\0') {
                 g_sensor_data.gps_data.latitude = nmea_to_decimal(lat_val, *lat_dir);
             }
@@ -144,6 +145,7 @@ namespace GPS {
         (void)time;
 
         if (status && *status == 'A') {
+            ESP_LOGI(TAG, "GPRMC Fix Valid.");
             g_sensor_data.gps_data.fix_valid = true;
             if (lat_val && lat_dir && *lat_dir != '\0') {
                 g_sensor_data.gps_data.latitude = nmea_to_decimal(lat_val, *lat_dir);
@@ -156,6 +158,7 @@ namespace GPS {
             }
             g_sensor_data.gps_valid = true; // Set gps_valid to true when a fix is obtained
         } else {
+            ESP_LOGW(TAG, "GPRMC No Fix. Status: %s", status ? status : "NULL");
             g_sensor_data.gps_data.fix_valid = false;
             g_sensor_data.gps_valid = false; // No fix, so GPS data is not valid
         }
@@ -163,6 +166,7 @@ namespace GPS {
 
     // Parse NMEA sentence
     void parse_nmea_sentence(char* sentence) {
+        ESP_LOGI(TAG, "NMEA Received: %s", sentence);
         if (!validate_nmea_checksum(sentence)) {
             ESP_LOGW(TAG, "parse_nmea_sentence: Invalid checksum for: %s", sentence);
             return;
