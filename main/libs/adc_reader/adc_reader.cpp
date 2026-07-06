@@ -131,7 +131,6 @@ void ADCReader::read_processed_data(float& avg_voltage, float& avg_current, floa
         } else {
             // Apply zero calibration offset
             inst_current -= zero_offset_a;
-            inst_current = std::abs(inst_current);
         }
 
         current_sum += inst_current;
