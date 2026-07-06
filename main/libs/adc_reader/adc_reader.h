@@ -12,6 +12,8 @@ public:
     ADCReader();
     ~ADCReader();
 
+    void initialize();
+
     /**
      * @brief Reads 200 samples of V and I.
      * @param avg_voltage Output: Average voltage of the 200 samples

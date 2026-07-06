@@ -1,8 +1,8 @@
 #include "config.h"
 
 namespace TelemetryConfig {
-    const char* WIFI_SSID = "Nospasa";
-    const char* WIFI_PASSWORD = "Canada031106";
+    const char* WIFI_SSID = "iPhone de Romerin";
+    const char* WIFI_PASSWORD = "aaaaaaaa";
     const char* ABLY_API_KEY = "ja_fwQ.K6CTEw:F-aWFMdJXPCv9MvxhYztCGna3XdRJZVgA0qm9pMfDOQ";
     const char* ABLY_CLIENT_ID_PREFIX = "esp32_telemetry_";
     const char* ABLY_CHANNEL = "EcoTele";
