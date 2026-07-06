@@ -12,6 +12,8 @@ void WiFiManager::eventHandler(void* arg, esp_event_base_t event_base, int32_t e
         if (instance->led_indicator) instance->led_indicator->set_wifi_connecting();
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
+        ESP_LOGE(TAG, "WiFi Disconnected! Reason code: %d", disconnected->reason);
         if (instance->led_indicator) instance->led_indicator->set_wifi_disconnected();
         xEventGroupClearBits(instance->event_group, instance->CONNECTED_BIT);
         esp_wifi_connect();
@@ -51,7 +53,7 @@ void WiFiManager::initialize() {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // Force ESP32-C5 to use 5GHz band - Must be called after esp_wifi_start()
-    ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_5G_ONLY));
+    // ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_5G_ONLY)); // Commented out to allow 2.4GHz connections
 }
 
 void WiFiManager::waitForConnection(uint32_t timeout_ms) {
