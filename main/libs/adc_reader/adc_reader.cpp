@@ -111,23 +111,7 @@ void ADCReader::read_processed_data(float& avg_voltage, float& avg_current, floa
         else mv_i = raw_i * 3300 / 4095;
         float inst_current = ((mv_i / 1000.0f) - VREF_V) / (GAIN * SHUNT_RESISTOR);
 
-        // Calibration phase: first 1000 samples (5 calls * 200 samples)
-        if (!is_calibrated) {
-            calibration_sum += inst_current;
-            calibration_count++;
-            
-            if (calibration_count >= 1000) {
-                zero_offset_a = calibration_sum / 1000.0f;
-                is_calibrated = true;
-                ESP_LOGI(TAG, "Current calibration complete. Zero offset: %.4f A", zero_offset_a);
-            }
-            
-            // During calibration, report as zero
-            inst_current = 0.0f;
-        } else {
-            // Apply zero calibration offset
-            inst_current -= zero_offset_a;
-        }
+
 
         current_sum += inst_current;
 
