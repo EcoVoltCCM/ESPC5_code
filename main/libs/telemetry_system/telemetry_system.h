@@ -8,6 +8,7 @@
 #include "../led_indicator/led_indicator.h"
 #include "../ads1115/ads1115.h"
 #include "../sd_card/sd_card.h"
+#include "../vesc_can/vesc_can.h"
 
 class TelemetrySystem {
 private:
@@ -20,6 +21,7 @@ private:
     HallSensor hall_sensor;
     LEDIndicator led_indicator;
     SDCard sd_card;
+    VescCan vesc_can;
     i2c_master_bus_handle_t i2c_bus = NULL;
 
     float cumulative_energy = 0.0f;

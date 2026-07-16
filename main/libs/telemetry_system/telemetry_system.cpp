@@ -123,6 +123,9 @@ void TelemetrySystem::run() {
     // 4. Initialize MQTT
     mqtt_client.initialize();
     
+    // Initialize VESC CAN
+    vesc_can.initialize();
+    
     ESP_LOGI(TAG, "Hardware ready. Launching tasks...");
     start_time_us = esp_timer_get_time();
 
@@ -192,6 +195,10 @@ void TelemetrySystem::sensor_loop() {
             telemetry.data.brake2_pct   = map_to_pct(b2_v);
         }
 
+        // Read VESC CAN data
+        vesc_data_t v_data;
+        vesc_can.read_messages(v_data);
+
         // Populate Telemetry Object
         message_count++;
         getISOTimestamp(telemetry.data.timestamp, sizeof(telemetry.data.timestamp));
@@ -224,6 +231,10 @@ void TelemetrySystem::sensor_loop() {
         telemetry.data.avg_power_w = avg_power;
         telemetry.data.energy_j = cumulative_energy;
         telemetry.data.distance_m = cumulative_distance;
+        telemetry.data.vesc_rpm = v_data.rpm;
+        telemetry.data.vesc_voltage_v = v_data.voltage_v;
+        telemetry.data.vesc_current_a = v_data.current_a;
+        telemetry.data.motor_temp_c = v_data.motor_temp_c;
 
         float distance_km = cumulative_distance / 1000.0f;
         float energy_kwh = cumulative_energy / 3600000.0f;

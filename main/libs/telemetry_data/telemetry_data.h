@@ -31,6 +31,10 @@ public:
         float g_long = 0.0f;        // Longitudinal acceleration in G
         float acc_eff_km_kwh = 0.0f; // Accumulated efficiency
         float inst_eff_km_kwh = 0.0f; // Instantaneous efficiency
+        float vesc_rpm = 0.0f;
+        float vesc_voltage_v = 0.0f;
+        float vesc_current_a = 0.0f;
+        float motor_temp_c = 0.0f;
         int message_id = 0;
         float uptime_seconds = 0.0f;
         char timestamp[32];

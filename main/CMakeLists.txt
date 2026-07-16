@@ -16,6 +16,7 @@ idf_component_register(
         "libs/led_indicator/led_indicator.cpp"
         "libs/ads1115/ads1115.cpp"
         "libs/sd_card/sd_card.cpp"
+        "libs/vesc_can/vesc_can.cpp"
 
     # List of components that this component depends on.
     PRIV_REQUIRES
@@ -41,6 +42,7 @@ idf_component_register(
         fatfs
         sdmmc
         vfs
+        esp_driver_twai
 )
 
 # Set this component to be treated as C++
