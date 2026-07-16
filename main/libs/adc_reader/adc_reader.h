@@ -35,10 +35,7 @@ private:
     adc_cali_handle_t voltage_cali_handle = nullptr;
     adc_cali_handle_t current_cali_handle = nullptr;
 
-    float zero_offset_a = 0.0f;
-    float calibration_sum = 0.0f;
-    int calibration_count = 0;
-    bool is_calibrated = false;
+
 
     SemaphoreHandle_t data_mutex;
 };
