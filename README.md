@@ -2,6 +2,11 @@
 
 This project is a telemetry and data acquisition system for a vehicle, built around the ESP32-C5 microcontroller. It reads from multiple sensors, logs data locally to an SD card, and transmits it via WiFi over MQTT.
 
+## Recent Updates
+
+- **Efficiency Metrics**: Added `acc_eff_km_kwh` (accumulated efficiency) and `inst_eff_km_kwh` (instantaneous efficiency) to both the SD card and the MQTT JSON payload. Both metrics seamlessly support regenerative braking (negative power).
+- **Calibration Removed**: The startup current calibration procedure (which averaged 1000 samples) was completely removed to speed up boot times and stream raw values directly.
+
 ## Libraries Overview
 
 The project is structured into various libraries located in the `main/libs` directory:
@@ -47,6 +52,8 @@ The following data is packaged and sent via MQTT (as JSON) and saved to the SD C
 | `gyro_x, gyro_y, gyro_z` | `float` | Gyroscope from main IMU |
 | `g_lat` | `float` | Lateral acceleration (G-force) |
 | `g_long` | `float` | Longitudinal acceleration (G-force) |
+| `acc_eff_km_kwh` | `float` | Accumulated efficiency (km/kWh) |
+| `inst_eff_km_kwh` | `float` | Instantaneous efficiency (km/kWh) |
 | `vehicle_heading` | `float` | Integrated heading from Z-gyro |
 | `total_acceleration` | `float` | Magnitude of the acceleration vector |
 | `steering_accel_x, _y, _z` | `float` | Acceleration from steering IMU |
