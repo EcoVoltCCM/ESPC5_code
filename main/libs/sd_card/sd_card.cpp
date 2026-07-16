@@ -94,7 +94,7 @@ esp_err_t SDCard::initialize() {
                "accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,"
                "s_accel_x,s_accel_y,s_accel_z,s_gyro_x,s_gyro_y,s_gyro_z,"
                "heading,total_accel,throttle_pct,brake_pct,brake2_pct,"
-               "g_lat,g_long\n");
+               "g_lat,g_long,acc_eff_km_kwh,inst_eff_km_kwh\n");
     fclose(f);
 
     is_initialized = true;

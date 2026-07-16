@@ -225,6 +225,13 @@ void TelemetrySystem::sensor_loop() {
         telemetry.data.energy_j = cumulative_energy;
         telemetry.data.distance_m = cumulative_distance;
 
+        float distance_km = cumulative_distance / 1000.0f;
+        float energy_kwh = cumulative_energy / 3600000.0f;
+        telemetry.data.acc_eff_km_kwh = (energy_kwh != 0.0f) ? (distance_km / energy_kwh) : 0.0f;
+
+        float power_kw = avg_power / 1000.0f;
+        telemetry.data.inst_eff_km_kwh = (power_kw != 0.0f) ? ((speed_ms * 3.6f) / power_kw) : 0.0f;
+
         // Send to sink task
         if (xQueueSend(telemetry_queue, &telemetry, 0) != pdTRUE) {
             ESP_LOGW(TAG, "Telemetry queue full, dropping record!");
