@@ -29,6 +29,8 @@ public:
         float brake2_pct = 0.0f;    // Brake 2 percentage
         float g_lat = 0.0f;         // Lateral acceleration in G
         float g_long = 0.0f;        // Longitudinal acceleration in G
+        float acc_eff_km_kwh = 0.0f; // Accumulated efficiency
+        float inst_eff_km_kwh = 0.0f; // Instantaneous efficiency
         int message_id = 0;
         float uptime_seconds = 0.0f;
         char timestamp[32];
