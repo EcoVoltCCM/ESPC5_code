@@ -11,7 +11,7 @@ class ADCReader {
 public:
     ADCReader();
     ~ADCReader();
-
+    
     void initialize();
 
     /**
