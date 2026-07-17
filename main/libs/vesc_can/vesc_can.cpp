@@ -92,8 +92,13 @@ bool IRAM_ATTR VescCan::rx_done_isr(twai_node_handle_t handle, const twai_rx_don
     rx_frame.buffer = data_buf;
     rx_frame.buffer_len = sizeof(data_buf);
 
-    while (twai_node_receive_from_isr(handle, &rx_frame) == ESP_OK) {
-        self->parse_message_isr(rx_frame);
+    // Use a bounded loop to prevent an infinite loop in case of a driver bug where twai_node_receive_from_isr always returns ESP_OK
+    for (int i = 0; i < 10; i++) {
+        if (twai_node_receive_from_isr(handle, &rx_frame) == ESP_OK) {
+            self->parse_message_isr(rx_frame);
+        } else {
+            break;
+        }
     }
     return false; // Did not wake higher priority task
 }
