@@ -28,4 +28,5 @@ private:
 
     twai_node_handle_t twai_node = NULL;
     vesc_data_t latest_data;
+    uint32_t msg_count = 0;
 };

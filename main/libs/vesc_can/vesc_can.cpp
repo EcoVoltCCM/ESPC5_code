@@ -69,9 +69,19 @@ void VescCan::initialize() {
 void VescCan::read_messages(vesc_data_t& out_data) {
     // We already parse asynchronously in the ISR.
     // Just copy the latest data out safely.
+    static uint32_t last_logged_count = 0;
+    
     portENTER_CRITICAL(&vesc_mux);
     out_data = latest_data;
+    uint32_t current_msg_count = msg_count;
     portEXIT_CRITICAL(&vesc_mux);
+    
+    // Log every 50 messages to avoid spamming the console
+    if (current_msg_count - last_logged_count >= 50) {
+        ESP_LOGI(TAG, "CAN msgs received: %lu | RPM: %.1f | V: %.1f | A: %.1f | Temp: %.1f C",
+                 current_msg_count, out_data.rpm, out_data.voltage_v, out_data.current_a, out_data.motor_temp_c);
+        last_logged_count = current_msg_count;
+    }
 }
 
 bool IRAM_ATTR VescCan::rx_done_isr(twai_node_handle_t handle, const twai_rx_done_event_data_t *edata, void *user_ctx) {
@@ -104,6 +114,7 @@ void IRAM_ATTR VescCan::parse_message_isr(const twai_frame_t& frame) {
         portENTER_CRITICAL_ISR(&vesc_mux);
         latest_data.rpm = (float)erpm / MOTOR_POLE_PAIRS;
         latest_data.current_a = (float)current / 10.0f;
+        msg_count++;
         portEXIT_CRITICAL_ISR(&vesc_mux);
         
     } else if (packet_id == CAN_PACKET_STATUS_4 && data_len >= 8) {
@@ -111,6 +122,7 @@ void IRAM_ATTR VescCan::parse_message_isr(const twai_frame_t& frame) {
         
         portENTER_CRITICAL_ISR(&vesc_mux);
         latest_data.motor_temp_c = (float)temp_motor / 10.0f;
+        msg_count++;
         portEXIT_CRITICAL_ISR(&vesc_mux);
         
     } else if (packet_id == CAN_PACKET_STATUS_5 && data_len >= 8) {
@@ -118,6 +130,7 @@ void IRAM_ATTR VescCan::parse_message_isr(const twai_frame_t& frame) {
         
         portENTER_CRITICAL_ISR(&vesc_mux);
         latest_data.voltage_v = (float)v_in / 10.0f;
+        msg_count++;
         portEXIT_CRITICAL_ISR(&vesc_mux);
     }
 }
